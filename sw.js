@@ -1,4 +1,4 @@
-const CACHE = 'receipts-v6';
+const CACHE = 'receipts-v7';
 const SHELL = ['./index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
