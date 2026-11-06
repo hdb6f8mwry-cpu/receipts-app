@@ -216,13 +216,17 @@ select.fi{cursor:pointer}
   <div class="sheet">
     <div class="handle"></div>
     <div class="sheet-title">Add Entry</div>
+    <button class="opt-btn" onclick="UI.showPaste()">
+      <span class="opt-ico">📋</span>
+      <div><div class="opt-label">Paste Receipt Text</div><div class="opt-sub">Most accurate — copy text with iPhone Live Text</div></div>
+    </button>
     <button class="opt-btn" onclick="UI.startScan()">
       <span class="opt-ico">📷</span>
-      <div><div class="opt-label">Take Photo</div><div class="opt-sub">Camera — text is read on your phone</div></div>
+      <div><div class="opt-label">Take Photo</div><div class="opt-sub">Basic in-app reading — check every field</div></div>
     </button>
     <button class="opt-btn" onclick="UI.startLibrary()">
       <span class="opt-ico">🖼</span>
-      <div><div class="opt-label">Choose from Photos</div><div class="opt-sub">Pick an existing receipt photo</div></div>
+      <div><div class="opt-label">Choose from Photos</div><div class="opt-sub">Basic in-app reading — check every field</div></div>
     </button>
     <button class="opt-btn" onclick="UI.showForm()">
       <span class="opt-ico">💳</span>
@@ -232,6 +236,22 @@ select.fi{cursor:pointer}
       <span class="opt-ico">💵</span>
       <div><div class="opt-label">Cash Payment</div><div class="opt-sub">No card — just amount and what for</div></div>
     </button>
+    <button class="btn-cancel" onclick="UI.close()">Cancel</button>
+  </div>
+</div>
+
+<!-- ======= PASTE TEXT SHEET ======= -->
+<div class="overlay" id="sh-paste">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Paste Receipt Text</div>
+    <div style="padding:0 14px">
+      <div class="guide-step">
+        In <strong>Photos</strong> (or the Camera), open the receipt → tap the <strong>Live Text</strong> button (lines in a box) → <strong>Select All</strong> → <strong>Copy</strong>. Then paste below.
+      </div>
+      <textarea id="paste-text" rows="8" placeholder="Paste receipt text here" style="width:100%;font:16px/1.4 ui-monospace,monospace;padding:10px;box-sizing:border-box;border-radius:10px;border:1px solid var(--sep);background:var(--surface2);color:var(--text);margin-bottom:8px"></textarea>
+    </div>
+    <button class="btn-primary" onclick="UI.readPasted()">Read Text</button>
     <button class="btn-cancel" onclick="UI.close()">Cancel</button>
   </div>
 </div>
@@ -346,8 +366,11 @@ select.fi{cursor:pointer}
       <div id="cards-list"></div>
       <div class="set-row" onclick="UI.addCard()" style="cursor:pointer;color:var(--accent)">+ Add card</div>
     </div>
-    <div class="section-title">Apple Pay</div>
+    <div class="section-title">Shortcuts</div>
     <div class="section" style="margin:0 14px">
+      <div class="set-row" onclick="UI.showReceiptShortcut()" style="cursor:pointer">
+        <span>🧾 Set up Scan Receipt Shortcut</span><span style="color:var(--text3)">›</span>
+      </div>
       <div class="set-row" onclick="UI.showShortcut()" style="cursor:pointer">
         <span>📱 Set up Apple Pay Shortcut</span><span style="color:var(--text3)">›</span>
       </div>
@@ -360,7 +383,7 @@ select.fi{cursor:pointer}
 <div class="overlay" id="sh-shortcut">
   <div class="sheet" style="padding:0 14px">
     <div class="handle"></div>
-    <div class="sheet-title">Apple Pay Shortcut</div>
+    <div class="sheet-title" id="shortcut-title">Apple Pay Shortcut</div>
     <div id="shortcut-body" style="padding-bottom:16px"></div>
     <button class="btn-cancel" style="margin:0 0 6px" onclick="UI.close()">Close</button>
   </div>
@@ -480,17 +503,33 @@ const OCR = (() => {
     ];
     outer:
     for (const p of amtPats) {
-      for (let i = 0; i < rev.length; i++) {
-        const l = rev[i];
+      for (const l of rev) {
         if (/sub.?total/i.test(l)) continue;
-        // Label and value can land on separate lines ("AMT:RM" / "27.60")
-        const m = l.match(p) || (/(?:amt|amount|total)\b.*rm\s*$/i.test(l) && i > 0 && ('rm ' + rev[i-1]).match(/rm\s*([\d,]+\.\d{2})/i));
+        const m = l.match(p);
         if (m) { amount = parseFloat(m[1].replace(/,/g,'')); break outer; }
+      }
+    }
+    // Label and value on separate lines ("AMT:RM" … "97.90"), common in Live Text column order
+    if (!amount) {
+      const money = /^\s*(?:rm\s*)?([\d,]+\.\d{2})\s*$/i;
+      for (let i = lines.length - 1; i >= 0 && !amount; i--) {
+        if (!/^\W*(?:grand\s+|net\s+)?(?:amt|amount|total|jumlah)\b[\s:]*(?:\(?rm\)?)?\s*:?\s*$/i.test(lines[i])) continue;
+        for (const n of lines.slice(i + 1, i + 6)) {
+          const m = n.match(money);
+          if (m) { amount = parseFloat(m[1].replace(/,/g,'')); break; }
+        }
       }
     }
     if (!amount) {
       const hits = [...text.matchAll(/rm\s*([\d,]+\.\d{2})/gi)]
         .map(m => parseFloat(m[1].replace(/,/g,'')))
+        .filter(n => n > 0 && n < 100000);
+      if (hits.length) amount = Math.max(...hits);
+    }
+    if (!amount) {
+      // Last resort: largest standalone money value (skips versions like 26.07.01)
+      const hits = [...text.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})(?![\d.])/g)]
+        .map(m => parseFloat(m[1].replace(/,/g,'') + '.' + m[2]))
         .filter(n => n > 0 && n < 100000);
       if (hits.length) amount = Math.max(...hits);
     }
@@ -1020,6 +1059,23 @@ const UI = (() => {
     $('library-input').click();
   }
 
+  function showPaste() {
+    close();
+    $('paste-text').value = '';
+    open('sh-paste');
+  }
+
+  function readText(text) {
+    if (!text || !text.trim()) return false;
+    close();
+    showForm(OCR.parse(text), 'receipt');
+    return true;
+  }
+
+  function readPasted() {
+    if (!readText($('paste-text').value)) $('paste-text').focus();
+  }
+
   async function handleImageFile(file) {
     open('sh-ocr');
     $('ocr-title').textContent = 'Reading Receipt…';
@@ -1255,8 +1311,42 @@ const UI = (() => {
   }
 
   // ----- Shortcut guide -----
+  function showReceiptShortcut() {
+    const url = location.origin + location.pathname;
+    $('shortcut-title').textContent = 'Scan Receipt Shortcut';
+    $('shortcut-body').innerHTML = `
+      <div style="font-size:14px;line-height:1.6;color:var(--text2);padding-top:4px">
+        <p style="margin-bottom:12px">Uses iPhone's own text recognition (same as Live Text) — much more accurate. Run it from the Share button on any receipt photo, or tap it to take a new photo. The text never leaves your phone.</p>
+        <div class="guide-step">
+          <strong>Step 1 — New shortcut</strong><br>
+          Open <strong>Shortcuts</strong> → <em>Shortcuts</em> tab → <strong>+</strong>. Name it <strong>Scan Receipt</strong>.
+        </div>
+        <div class="guide-step">
+          <strong>Step 2 — Allow sharing photos to it</strong><br>
+          Tap the <strong>ⓘ</strong> (details) → turn on <strong>Show in Share Sheet</strong>. Back in the editor, tap <em>Images</em> at the top so it only receives images. Set <em>If there's no input</em> → <strong>Ask For Photos</strong> (or <em>Take Photo</em>).
+        </div>
+        <div class="guide-step">
+          <strong>Step 3 — Add these 3 actions, in order</strong><br>
+          1. <strong>Extract Text from Image</strong> (input: Shortcut Input)<br>
+          2. <strong>URL Encode</strong> (input: Text from step 1, mode: Encode)<br>
+          3. <strong>Open URLs</strong> with this URL, then replace <em>Encoded Text</em> with the variable from step 2:
+          <code class="guide-url">${url}#ocr=<strong>Encoded Text</strong></code>
+        </div>
+        <div class="guide-step">
+          <strong>Step 4 — Use it</strong><br>
+          In Photos, open a receipt → <strong>Share</strong> → <strong>Scan Receipt</strong>. The app opens with the details filled in for you to check and save.
+        </div>
+        <div class="guide-warn">
+          <strong>Tip</strong><br>
+          The Shortcut opens the app in Safari. Keep using the app from Safari so all entries stay in one place.
+        </div>
+      </div>`;
+    open('sh-shortcut');
+  }
+
   function showShortcut() {
     const url = location.origin + location.pathname;
+    $('shortcut-title').textContent = 'Apple Pay Shortcut';
     $('shortcut-body').innerHTML = `
       <div style="font-size:14px;line-height:1.6;color:var(--text2);padding-top:4px">
         <p style="margin-bottom:12px">Each time you pay with Apple Pay, a Shortcut opens this app and saves the transaction automatically.</p>
@@ -1298,7 +1388,7 @@ const UI = (() => {
 
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
-    showAdd, startScan, startLibrary, showForm, showCashForm, saveForm, doMerge, skipMerge,
+    showAdd, startScan, startLibrary, showPaste, readPasted, readText, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
     showDetail, showExport, showSettings, addCard, removeCard, showShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
@@ -1338,6 +1428,17 @@ async function handleApplePay() {
 }
 
 
+// Receipt text from the Scan Receipt shortcut arrives in the #fragment, which browsers never send to the server
+function handleOcrHash() {
+  const m = location.hash.match(/^#ocr=([\s\S]*)/);
+  if (!m) return;
+  let text = m[1];
+  try { text = decodeURIComponent(text.replace(/\+/g, ' ')); } catch (e) {}
+  history.replaceState({}, '', location.pathname + location.search);
+  UI.readText(text);
+}
+window.addEventListener('hashchange', handleOcrHash);
+
 // ============================================================
 // BOOT
 // ============================================================
@@ -1345,6 +1446,7 @@ async function handleApplePay() {
   await DB.open();
   await handleApplePay();
   UI.renderDashboard();
+  handleOcrHash();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
 </script>
