@@ -366,7 +366,7 @@ select.fi{cursor:pointer}
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script>
 'use strict';
 
@@ -535,23 +535,15 @@ const OCR = (() => {
   }
 
   async function run(file, onProgress) {
-    const worker = await Tesseract.createWorker('eng', 1, {
-      workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
-      langPath:   'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@4.0.0_best_int',
-      corePath:   'https://cdn.jsdelivr.net/npm/tesseract.js-core@4.0.4/tesseract-core.wasm.js',
+    const { data: { text } } = await Tesseract.recognize(file, 'eng', {
       logger: m => {
         const pct = Math.round(m.progress * 100);
-        if (m.status === 'loading tesseract core')       onProgress(pct * .2,          'Loading engine…');
+        if (m.status === 'loading tesseract core')       onProgress(pct * .2,       'Loading engine…');
         if (m.status === 'loading language traineddata') onProgress(20 + pct * .3,  'Loading language…');
-        if (m.status === 'recognizing text')             onProgress(50 + pct * .5,    `Reading… ${pct}%`);
+        if (m.status === 'recognizing text')             onProgress(50 + pct * .5,  `Reading… ${pct}%`);
       },
     });
-    try {
-      const { data: { text } } = await worker.recognize(file);
-      return { text, parsed: parse(text) };
-    } finally {
-      worker.terminate();
-    }
+    return { text, parsed: parse(text) };
   }
 
   return { run, parse };
