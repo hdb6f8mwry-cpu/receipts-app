@@ -448,10 +448,17 @@ const DB = (() => {
 })();
 
 
+// Local YYYY-MM-DD (toISOString is UTC and shifts to the previous day in UTC+8)
+const localISO = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 // ============================================================
 // OCR
 // ============================================================
 const OCR = (() => {
+  const BANK_RE = /maybank|cimb|public\s*bank|rhb|hong\s*leong|ambank|bank\s*islam|bsn|uob|ocbc|hsbc|standard\s*chartered|affin|alliance\s*bank|bank\s*rakyat|paynet|ipay88|molpay/i;
+  const titleCase = s => s.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
+
   function parse(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
     const rev   = [...lines].reverse();
@@ -498,14 +505,14 @@ const OCR = (() => {
           try {
             const d = p.parse(m);
             if (!isNaN(d) && d.getFullYear() > 2000 && d <= new Date()) {
-              date = d.toISOString().slice(0,10); break;
+              date = localISO(d); break;
             }
           } catch(e) {}
         }
       }
       if (date) break;
     }
-    if (!date) date = new Date().toISOString().slice(0,10);
+    if (!date) date = localISO();
 
     // ----- Merchant -----
     // Real text lines have some lowercase; logo OCR noise tends to be ALL_CAPS random strings
@@ -517,8 +524,20 @@ const OCR = (() => {
       return /[A-Z][a-z]{4,}/.test(l) || /cafe|restaurant|bistro|hotel|mart|hypermart/i.test(l);
     };
     let merchant = '';
-    for (const l of lines.slice(0, 15)) {
-      if (!isMerchantLine(l)) continue;
+    // Card-terminal slip: bank logo on top, merchant name on the next line (all caps)
+    const bankIdx = lines.slice(0, 6).findIndex(l => BANK_RE.test(l));
+    if (bankIdx >= 0) {
+      for (const l of lines.slice(bankIdx + 1, bankIdx + 4)) {
+        if (/^(date|time|batch|mid|tid|lot|no\b)/i.test(l) || BANK_RE.test(l)) continue;
+        const clean = l.replace(/[^A-Za-z0-9\s\-&'\.]/g, ' ')
+          .split(/\s+/).map(w => w.replace(/^[\-'\.]+|[\-'\.]+$/g, '')).filter(Boolean)
+          .filter((w, i, a) => !((i === 0 || i === a.length - 1) && w.length < 2))
+          .join(' ');
+        if (/[A-Za-z]{2,}/.test(clean) && clean.length > 2) { merchant = titleCase(clean); break; }
+      }
+    }
+    for (const l of merchant ? [] : lines.slice(0, 15)) {
+      if (BANK_RE.test(l) || !isMerchantLine(l)) continue;
       const clean = l.replace(/[^\w\s\-&'\.\/]/g,'').trim();
       if (clean.length > 2) { merchant = clean; break; }
     }
@@ -532,38 +551,25 @@ const OCR = (() => {
     // ----- Card last 4 -----
     let card_last4 = null;
     const cPats = [
-      /(?:visa|mastercard|master\s+card|amex|american\s+express|mbb|maybank|cimb|debit|credit)[^\d]*(?:[\d\s\*]{8,15})?(\d{4})/i,
-      /\*{3,}\s*(\d{4})/,
-      /(?:card|kad)[^\d]*(?:\d[\d\s]{10,15})?(\d{4})/i,
+      /[\*xX×]{4,}[\s\-]*(\d{4})\b/,
+      /(?:visa|mastercard|master\s+card|amex|american\s+express|debit|credit)[\s:\-#]*(?:[\d\s\*xX]{8,15})?(\d{4})\b/i,
+      /(?:card|kad)\s*(?:no)?[\s:\-#]*(?:[\d\s\*xX]{8,15})?(\d{4})\b/i,
     ];
-    for (const l of lines) {
-      for (const p of cPats) {
+    outerCard:
+    for (const p of cPats) {
+      for (const l of lines) {
         const m = l.match(p);
-        if (m) { card_last4 = m[1]; break; }
-      }
-      if (card_last4) break;
-    }
-
-    // ----- Card name hint (even if no last4 found) -----
-    // Also check lines just before "Approval Code" for card type
-    let card_name_hint = null;
-    for (let i = 0; i < lines.length; i++) {
-      if (/approval\s+code/i.test(lines[i]) && i > 0) {
-        const ctx = lines.slice(Math.max(0,i-3), i+1).join(' ');
-        if (/amex/i.test(ctx))                                   { card_name_hint = /mbb|maybank/i.test(ctx) ? 'Maybank AMEX' : 'AMEX'; break; }
-        if (/mbb\s*visa|maybank\s*visa/i.test(ctx))              { card_name_hint = 'Maybank VISA'; break; }
-        if (/cimb/i.test(ctx))                                   { card_name_hint = 'CIMB VISA'; break; }
-        if (/mbb|maybank/i.test(ctx))                            { card_name_hint = 'Maybank'; break; }
+        if (m) { card_last4 = m[1]; break outerCard; }
       }
     }
-    if (!card_name_hint && !card_last4) {
-      if (/mbb\s*amex|maybank\s*amex/i.test(text))              card_name_hint = 'Maybank AMEX';
-      else if (/mbb\s*visa|maybank\s*visa/i.test(text))         card_name_hint = 'Maybank VISA';
-      else if (/cimb/i.test(text))                              card_name_hint = 'CIMB VISA';
-      else if (/maybank|mbb/i.test(text))                       card_name_hint = 'Maybank';
-    }
 
-    return { amount, date, merchant, card_last4, card_name_hint };
+    // ----- Card network (terminal bank ≠ card issuer, so network is the reliable signal) -----
+    let card_network = null;
+    if (/amex|american\s*express/i.test(text))       card_network = 'amex';
+    else if (/master\s*card/i.test(text))            card_network = 'mastercard';
+    else if (/visa/i.test(text))                     card_network = 'visa';
+
+    return { amount, date, merchant, card_last4, card_network };
   }
 
   async function run(file, onProgress) {
@@ -637,7 +643,7 @@ const Exp = (() => {
       fn = `receipts_maybank_${sf.replace(' ','')}_to_${ef.replace(/ /g,'')}.csv`;
     } else {
       entries = all;
-      fn = `receipts_all_${now.toISOString().slice(0,10)}.csv`;
+      fn = `receipts_all_${localISO(now)}.csv`;
     }
 
     await share(toCSV(entries), fn, 'text/csv;charset=utf-8;');
@@ -650,7 +656,7 @@ const Exp = (() => {
     const entries = await DB.allEntries();
     const cards   = await DB.getCards();
     const payload = JSON.stringify({ version:1, exported:new Date().toISOString(), entries, cards }, null, 2);
-    await share(payload, `receipts_backup_${new Date().toISOString().slice(0,10)}.json`, 'application/json');
+    await share(payload, `receipts_backup_${localISO()}.json`, 'application/json');
     await DB.setSetting('export_last_date', new Date().toISOString());
     UI.toast('Backup saved');
     UI.renderBanner();
@@ -689,6 +695,7 @@ const UI = (() => {
   let _view  = 'cards';   // 'cards' | 'merchant' | 'categories'
   let _editId = null;
   let _pendingDup = null;
+  let _printedLast4 = null;
 
   // ----- Helpers -----
   const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -990,24 +997,31 @@ const UI = (() => {
 
     $('f-merchant').value = prefill.merchant || '';
     $('f-amount').value   = prefill.amount   ? (+prefill.amount).toFixed(2) : '';
-    $('f-date').value     = prefill.date     || new Date().toISOString().slice(0,10);
+    $('f-date').value     = prefill.date     || localISO();
     $('f-cat').value      = prefill.category || '';
     $('f-src').value      = prefill.source   || srcDefault;
 
     // Select card
+    _printedLast4 = null;
+    const has = v => cards.some(c => c.last4 === v);
     if (prefill.source === 'cash' || srcDefault === 'cash') {
       sel.value = ''; // Cash
-    } else if (prefill.card_last4) {
-      const opt = [...sel.options].find(o => o.value === prefill.card_last4);
-      if (opt) sel.value = opt.value;
+    } else if (prefill.card_last4 && has(prefill.card_last4)) {
+      sel.value = prefill.card_last4;
     } else if (prefill.card_name) {
       const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
       if (matched) sel.value = matched.last4;
-    } else if (prefill.card_name_hint) {
-      // No last4 but OCR found a card type hint (e.g. "Maybank AMEX")
-      const hint = prefill.card_name_hint.toLowerCase();
-      const matched = cards.find(c => hint.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(hint));
-      if (matched) { sel.value = matched.last4; $('f-src').value = 'receipt'; }
+    } else if (srcDefault === 'receipt') {
+      // Printed number may be an Apple Pay device number — check learned aliases, then card network
+      const aliases = (await DB.getSetting('card_aliases')) || {};
+      let pick = prefill.card_last4 && aliases[prefill.card_last4];
+      if (!pick && prefill.card_network) {
+        const net = cards.filter(c => c.name.toLowerCase().includes(prefill.card_network === 'amex' ? 'amex' : prefill.card_network));
+        if (net.length === 1) pick = net[0].last4;
+      }
+      if (!pick && (prefill.card_last4 || prefill.card_network) && cards.length) pick = cards[0].last4;
+      if (pick && has(pick)) sel.value = pick;
+      if (prefill.card_last4) _printedLast4 = prefill.card_last4;
     }
 
     $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : 'New Entry');
@@ -1035,6 +1049,11 @@ const UI = (() => {
     const cards   = await DB.getCards();
     const isCash  = !card_last4;
     const card    = isCash ? null : cards.find(c => c.last4 === card_last4);
+    if (_printedLast4 && card) {
+      const aliases = (await DB.getSetting('card_aliases')) || {};
+      aliases[_printedLast4] = card.last4;
+      await DB.setSetting('card_aliases', aliases);
+    }
     const entry   = {
       merchant, amount, date,
       card_last4: isCash ? '' : card_last4,
@@ -1221,7 +1240,7 @@ async function handleApplePay() {
 
   const cards = await DB.getCards();
   const card  = cards.find(c => cardRaw.includes(c.last4) || cardRaw.toLowerCase().includes(c.name.toLowerCase()));
-  const today = new Date().toISOString().slice(0,10);
+  const today = localISO();
   const entry = { merchant, amount, date:today, card_last4: card?.last4||'', card_name: card?.name||cardRaw, category:'', source:'apple-pay' };
 
   const dup = await DB.findDup(entry);
