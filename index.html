@@ -400,6 +400,12 @@ const DB = (() => {
   const NAME = 'receipt-tracker', VER = 1;
   let _db;
 
+  // Apple Pay prints a per-device card number on slips, not the physical card's
+  const DEFAULT_DEVICES = {
+    '6698': { iphone:'5897', watch:'2835' },
+    '5717': { iphone:'0286', watch:'1401' },
+    '5481': { iphone:'6848', watch:'6863' },
+  };
   const DEFAULT_CARDS = [
     { name:'Maybank AMEX', last4:'6698' },
     { name:'Maybank VISA', last4:'5717' },
@@ -432,7 +438,10 @@ const DB = (() => {
   }
   const setSetting = (key, value) => promReq(store('settings','readwrite').put({key, value}));
 
-  async function getCards() { return getSetting('cards', DEFAULT_CARDS); }
+  async function getCards() {
+    const cards = await getSetting('cards', DEFAULT_CARDS);
+    return cards.map(c => c.devices ? c : { ...c, devices: { ...(DEFAULT_DEVICES[c.last4] || {}) } });
+  }
   const saveCards = c => setSetting('cards', c);
 
   async function addEntry(e) {
@@ -467,7 +476,10 @@ const DB = (() => {
     );
   }
 
-  return { open, getSetting, setSetting, getCards, saveCards, addEntry, updateEntry, deleteEntry, allEntries, entriesForMonth, findDup };
+  // Match a printed number against a card's own last 4 or its iPhone/Watch numbers
+  const cardByNumber = (cards, n) => n ? cards.find(c => c.last4 === n || Object.values(c.devices || {}).includes(n)) : undefined;
+
+  return { open, getSetting, setSetting, getCards, saveCards, cardByNumber, addEntry, updateEntry, deleteEntry, allEntries, entriesForMonth, findDup };
 })();
 
 
@@ -1144,8 +1156,8 @@ const UI = (() => {
     const has = v => cards.some(c => c.last4 === v);
     if (prefill.source === 'cash' || srcDefault === 'cash') {
       sel.value = ''; // Cash
-    } else if (prefill.card_last4 && has(prefill.card_last4)) {
-      sel.value = prefill.card_last4;
+    } else if (DB.cardByNumber(cards, prefill.card_last4)) {
+      sel.value = DB.cardByNumber(cards, prefill.card_last4).last4;
     } else if (prefill.card_name) {
       const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
       if (matched) sel.value = matched.last4;
@@ -1187,7 +1199,7 @@ const UI = (() => {
     const cards   = await DB.getCards();
     const isCash  = !card_last4;
     const card    = isCash ? null : cards.find(c => c.last4 === card_last4);
-    if (_printedLast4 && card) {
+    if (_printedLast4 && card && !DB.cardByNumber(cards, _printedLast4)) {
       const aliases = (await DB.getSetting('card_aliases')) || {};
       aliases[_printedLast4] = card.last4;
       await DB.setSetting('card_aliases', aliases);
@@ -1283,21 +1295,55 @@ const UI = (() => {
   // ----- Settings -----
   async function showSettings() {
     const cards = await DB.getCards();
-    $('cards-list').innerHTML = cards.map((c,i) => `
+    $('cards-list').innerHTML = cards.map((c,i) => {
+      const d = c.devices || {};
+      return `
       <div class="set-row">
-        <span>${esc(c.name)}&nbsp;&middot;${c.last4}</span>
-        <button class="set-rm" onclick="UI.removeCard(${i})">Remove</button>
-      </div>`).join('');
+        <span>${esc(c.name)}&nbsp;&middot;${c.last4}
+          <span style="display:block;font-size:12px;color:var(--text3);margin-top:2px">iPhone ·${esc(d.iphone || '—')} &nbsp; Watch ·${esc(d.watch || '—')}</span>
+        </span>
+        <span style="display:flex;gap:6px">
+          <button class="set-rm" style="color:var(--accent)" onclick="UI.editDevices(${i})">Edit</button>
+          <button class="set-rm" onclick="UI.removeCard(${i})">Remove</button>
+        </span>
+      </div>`;
+    }).join('');
     open('sh-settings');
+  }
+
+  // Blank keeps nothing; null (Cancel) aborts
+  function askDigits(label, current) {
+    while (true) {
+      const v = prompt(label + ' — last 4 digits (leave blank if none)', current || '');
+      if (v === null) return null;
+      if (v.trim() === '' || /^\d{4}$/.test(v.trim())) return v.trim();
+      alert('Enter exactly 4 digits');
+    }
+  }
+
+  async function editDevices(i) {
+    const cards = await DB.getCards();
+    const d = cards[i].devices || {};
+    const iphone = askDigits(cards[i].name + ': iPhone Apple Pay number', d.iphone);
+    if (iphone === null) return;
+    const watch = askDigits(cards[i].name + ': Apple Watch Apple Pay number', d.watch);
+    if (watch === null) return;
+    cards[i].devices = { iphone, watch };
+    await DB.saveCards(cards);
+    showSettings();
   }
 
   async function addCard() {
     const name  = prompt('Card label (e.g. CIMB Mastercard)');
     if (!name) return;
-    const last4 = prompt('Last 4 digits');
+    const last4 = prompt('Last 4 digits on the physical card');
     if (!last4 || !/^\d{4}$/.test(last4)) { alert('Enter exactly 4 digits'); return; }
+    const iphone = askDigits('iPhone Apple Pay number (Wallet → card → ⋯ → Card Number)', '');
+    if (iphone === null) return;
+    const watch = askDigits('Apple Watch Apple Pay number', '');
+    if (watch === null) return;
     const cards = await DB.getCards();
-    cards.push({ name: name.trim(), last4 });
+    cards.push({ name: name.trim(), last4, devices: { iphone, watch } });
     await DB.saveCards(cards);
     showSettings();
   }
@@ -1389,7 +1435,7 @@ const UI = (() => {
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
     showAdd, startScan, startLibrary, showPaste, readPasted, readText, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
-    showDetail, showExport, showSettings, addCard, removeCard, showShortcut,
+    showDetail, showExport, showSettings, addCard, editDevices, removeCard, showShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
   };
@@ -1411,7 +1457,8 @@ async function handleApplePay() {
   if (!amount || amount <= 0) return;
 
   const cards = await DB.getCards();
-  const card  = cards.find(c => cardRaw.includes(c.last4) || cardRaw.toLowerCase().includes(c.name.toLowerCase()));
+  const card  = DB.cardByNumber(cards, (cardRaw.match(/(\d{4})\D*$/) || [])[1])
+    || cards.find(c => cardRaw.toLowerCase().includes(c.name.toLowerCase()));
   const today = localISO();
   const entry = { merchant, amount, date:today, card_last4: card?.last4||'', card_name: card?.name||cardRaw, category:'', source:'apple-pay' };
 
