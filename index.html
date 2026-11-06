@@ -508,18 +508,31 @@ const OCR = (() => {
     if (!date) date = new Date().toISOString().slice(0,10);
 
     // ----- Merchant -----
+    // Real text lines have some lowercase; logo OCR noise tends to be ALL_CAPS random strings
+    const isMerchantLine = l => {
+      if (/^['=\\|*~]|['=\\|*~]\s*$/.test(l.trim())) return false; // decorative border lines
+      if (/^\d|^receipt|^tax\s*inv|^invoice|^cashier|^tel:|^fax:|^gst|^sst|^https?:/i.test(l)) return false;
+      if (/floor|ground|level|mall|plaza|jalan|lorong|kuala.lumpur|selangor|postcode|sdn\s*bhd|\d{5}|gardens|valley|avenue|street|city|town|reg\s*no|approval|please\s+reg|global\s+concepts/i.test(l)) return false;
+      // Accept if line has a proper-case word ≥5 chars (e.g. "Starbucks", "McDonald") — filters logo OCR noise
+      return /[A-Z][a-z]{4,}/.test(l) || /cafe|restaurant|bistro|hotel|mart|hypermart/i.test(l);
+    };
     let merchant = '';
-    for (const l of lines.slice(0,6)) {
-      if (l.length > 2 && !/^\d|^receipt|^tax\s+inv|^invoice|^cashier|^tel:/i.test(l)) {
-        merchant = l.replace(/[^\w\s\-&'\.\/]/g,'').trim();
-        if (merchant.length > 2) break;
-      }
+    for (const l of lines.slice(0, 15)) {
+      if (!isMerchantLine(l)) continue;
+      const clean = l.replace(/[^\w\s\-&'\.\/]/g,'').trim();
+      if (clean.length > 2) { merchant = clean; break; }
+    }
+    // Fallback: domain from website URL (OCR may read "twgtea.com" or "twgtea com")
+    if (!merchant) {
+      const urlM = text.match(/([a-zA-Z0-9][a-zA-Z0-9-]{3,})[\s.]?(com\.my|com|my|net|org)\b/i);
+      if (urlM && !/einvoice|zeoniq|github|google|apple/i.test(urlM[1]))
+        merchant = urlM[1].charAt(0).toUpperCase() + urlM[1].slice(1).toLowerCase();
     }
 
     // ----- Card last 4 -----
     let card_last4 = null;
     const cPats = [
-      /(?:visa|mastercard|master\s+card|amex|american\s+express|debit|credit)[^\d]*(?:[\d\s\*]{8,15})?(\d{4})/i,
+      /(?:visa|mastercard|master\s+card|amex|american\s+express|mbb|maybank|cimb|debit|credit)[^\d]*(?:[\d\s\*]{8,15})?(\d{4})/i,
       /\*{3,}\s*(\d{4})/,
       /(?:card|kad)[^\d]*(?:\d[\d\s]{10,15})?(\d{4})/i,
     ];
@@ -531,7 +544,26 @@ const OCR = (() => {
       if (card_last4) break;
     }
 
-    return { amount, date, merchant, card_last4 };
+    // ----- Card name hint (even if no last4 found) -----
+    // Also check lines just before "Approval Code" for card type
+    let card_name_hint = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (/approval\s+code/i.test(lines[i]) && i > 0) {
+        const ctx = lines.slice(Math.max(0,i-3), i+1).join(' ');
+        if (/amex/i.test(ctx))                                   { card_name_hint = /mbb|maybank/i.test(ctx) ? 'Maybank AMEX' : 'AMEX'; break; }
+        if (/mbb\s*visa|maybank\s*visa/i.test(ctx))              { card_name_hint = 'Maybank VISA'; break; }
+        if (/cimb/i.test(ctx))                                   { card_name_hint = 'CIMB VISA'; break; }
+        if (/mbb|maybank/i.test(ctx))                            { card_name_hint = 'Maybank'; break; }
+      }
+    }
+    if (!card_name_hint && !card_last4) {
+      if (/mbb\s*amex|maybank\s*amex/i.test(text))              card_name_hint = 'Maybank AMEX';
+      else if (/mbb\s*visa|maybank\s*visa/i.test(text))         card_name_hint = 'Maybank VISA';
+      else if (/cimb/i.test(text))                              card_name_hint = 'CIMB VISA';
+      else if (/maybank|mbb/i.test(text))                       card_name_hint = 'Maybank';
+    }
+
+    return { amount, date, merchant, card_last4, card_name_hint };
   }
 
   async function run(file, onProgress) {
@@ -971,6 +1003,11 @@ const UI = (() => {
     } else if (prefill.card_name) {
       const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
       if (matched) sel.value = matched.last4;
+    } else if (prefill.card_name_hint) {
+      // No last4 but OCR found a card type hint (e.g. "Maybank AMEX")
+      const hint = prefill.card_name_hint.toLowerCase();
+      const matched = cards.find(c => hint.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(hint));
+      if (matched) { sel.value = matched.last4; $('f-src').value = 'receipt'; }
     }
 
     $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : 'New Entry');
