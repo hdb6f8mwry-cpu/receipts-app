@@ -116,6 +116,9 @@ label.fl{font-size:15px;color:var(--text3);min-width:82px;flex-shrink:0}
 input.fi,select.fi{flex:1;background:none;border:none;font-size:15px;color:var(--text);font-family:inherit;text-align:right;outline:none;min-width:0;cursor:text}
 input.fi::placeholder{color:var(--text3)}
 select.fi{cursor:pointer}
+.form-row.need label.fl{color:var(--red)}
+.raw-toggle{display:block;margin:-4px auto 12px;background:none;border:none;color:var(--accent);font-size:15px;font-family:inherit;cursor:pointer;padding:6px}
+.raw-text{margin:0 14px 14px;padding:10px 12px;max-height:220px;overflow:auto;background:var(--surface2);border-radius:10px;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:var(--text);user-select:text;-webkit-user-select:text}
 
 /* ---- Buttons ---- */
 .btn-primary{display:block;width:calc(100% - 28px);margin:4px 14px;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:16px;font-weight:600;cursor:pointer;touch-action:manipulation}
@@ -312,6 +315,10 @@ select.fi{cursor:pointer}
         </div>
       </div>
     </div>
+    <div id="raw-wrap" style="display:none">
+      <button type="button" class="raw-toggle" id="raw-toggle" onclick="UI.toggleRaw()">Show scanned text</button>
+      <pre class="raw-text" id="raw-text" style="display:none"></pre>
+    </div>
     <button class="btn-primary" id="form-save" onclick="UI.saveForm()">Save Entry</button>
     <button class="btn-cancel" onclick="UI.close()">Cancel</button>
   </div>
@@ -501,51 +508,57 @@ const OCR = (() => {
   const fixDigits = s => s.replace(/[Oo]/g,'0').replace(/[lI|]/g,'1').replace(/S/g,'5').replace(/B/g,'8').replace(/T/g,'7').replace(/Z/g,'2');
 
   function parse(text) {
+    // Live Text / Shortcuts may use \r or Unicode line separators
+    text = String(text || '').replace(/\r\n?|[\u2028\u2029]/g, '\n');
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
     const rev   = [...lines].reverse();
 
     // ----- Amount -----
+    // A money value has exactly 2 decimals and stands alone: not part of 26.07.01 or 1,234.567
+    const MONEY = String.raw`(?<![\d.,])((?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})(?![\d]|[.,]\d)`;
+    const toNum = s => parseFloat(s.replace(/,/g, ''));
+    const okAmt = n => n > 0 && n < 100000;
+    // Terminal IDs that must never be read as the amount
+    const ID_LINE = /\b(?:tid|mid|rrn|trace|auth|appr|inv|invoice\s*no|batch|stan|ref|aid|tvr|tsi|crypt|serial|terminal|merchant\s*id)\b/i;
     let amount = null;
+    // Label and value on the same line, e.g. "TOTAL RM 97.90", "AMT:RM 97.90". The gap is short so
+    // "TOTAL AMOUNT ACCORDING TO … Version: 26.07.01" can't match.
+    const GAP = String.raw`[^\d\n]{0,12}?`;
     const amtPats = [
-      /grand\s+total\D*([\d,]+\.\d{2})/i,
-      /total\s+amount\D*([\d,]+\.\d{2})/i,
-      /(?:^|\s)total\D*([\d,]+\.\d{2})/i,
-      /jumlah\s*besar?\D*([\d,]+\.\d{2})/i,
-      /jumlah\D*([\d,]+\.\d{2})/i,
-      /amount\s+due\D*([\d,]+\.\d{2})/i,
-      /(?:amt|amount)\b[^\d]*([\d,]+\.\d{2})/i,
-      /rm\s*([\d,]+\.\d{2})\s*$/i,
-    ];
+      /grand\s+total/, /total\s+amount/, /amount\s+due/, /jumlah\s+besar/, /net\s+total/,
+      /(?:^|[^a-z])total/, /jumlah/, /(?:^|[^a-z])(?:amt|amount)/,
+    ].map(l => new RegExp(l.source + String.raw`\b` + GAP + MONEY, 'i'));
     outer:
     for (const p of amtPats) {
       for (const l of rev) {
-        if (/sub.?total/i.test(l)) continue;
+        if (/sub.?total|total\s+(?:qty|item|disc|saving)|change|tunai|cash\s+tendered/i.test(l)) continue;
         const m = l.match(p);
-        if (m) { amount = parseFloat(m[1].replace(/,/g,'')); break outer; }
+        if (m && okAmt(toNum(m[1]))) { amount = toNum(m[1]); break outer; }
       }
     }
-    // Label and value on separate lines ("AMT:RM" … "97.90"), common in Live Text column order
+    // Label on one line, value on a following line ("AMT: RM" / "97.90"), as Live Text reads columns
     if (!amount) {
-      const money = /^\s*(?:rm\s*)?([\d,]+\.\d{2})\s*$/i;
+      const LABEL = /^\W*(?:grand\s+|net\s+)?(?:total\s+amount|amount\s+due|jumlah\s+besar|amt|amount|total|jumlah)\b\s*:?\s*(?:\(?(?:rm|myr)\)?)?\s*:?\s*$/i;
+      const VALUE = new RegExp(String.raw`^\s*(?:rm|myr)?\s*:?\s*` + MONEY + String.raw`\s*$`, 'i');
       for (let i = lines.length - 1; i >= 0 && !amount; i--) {
-        if (!/^\W*(?:grand\s+|net\s+)?(?:amt|amount|total|jumlah)\b[\s:]*(?:\(?rm\)?)?\s*:?\s*$/i.test(lines[i])) continue;
-        for (const n of lines.slice(i + 1, i + 6)) {
-          const m = n.match(money);
-          if (m) { amount = parseFloat(m[1].replace(/,/g,'')); break; }
+        if (!LABEL.test(lines[i])) continue;
+        for (const n of lines.slice(i + 1, i + 4)) {
+          if (/^\W*(?:rm|myr)\W*$/i.test(n)) continue;           // currency on its own line
+          const m = n.match(VALUE);
+          if (m && okAmt(toNum(m[1]))) { amount = toNum(m[1]); break; }
         }
       }
     }
     if (!amount) {
-      const hits = [...text.matchAll(/rm\s*([\d,]+\.\d{2})/gi)]
-        .map(m => parseFloat(m[1].replace(/,/g,'')))
-        .filter(n => n > 0 && n < 100000);
+      const hits = [...text.matchAll(new RegExp(String.raw`(?:rm|myr)\s*:?\s*` + MONEY, 'gi'))]
+        .map(m => toNum(m[1])).filter(okAmt);
       if (hits.length) amount = Math.max(...hits);
     }
     if (!amount) {
-      // Last resort: largest standalone money value (skips versions like 26.07.01)
-      const hits = [...text.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})(?![\d.])/g)]
-        .map(m => parseFloat(m[1].replace(/,/g,'') + '.' + m[2]))
-        .filter(n => n > 0 && n < 100000);
+      // Last resort: largest standalone money value, ignoring ID / version lines
+      const hits = lines.filter(l => !ID_LINE.test(l) && !/version|ver\b/i.test(l))
+        .flatMap(l => [...l.matchAll(new RegExp(MONEY, 'g'))].map(m => toNum(m[1])))
+        .filter(okAmt);
       if (hits.length) amount = Math.max(...hits);
     }
 
@@ -617,6 +630,8 @@ const OCR = (() => {
     const cPats = [
       // masked digits: ****, XXXX, or OCR'd mask glyphs (w % + » A)
       /(?:[\*xX×+»#•%wA]{2,}\s*){2,}([\dOoTlISBZ]{3}\d|\d[\dOoTlISBZ]{3})\b/,
+      // "4389 10****** 1401"
+      /\b\d{4}\s?\d{0,6}[\*xX•]{2,}[\s\*xX•]*(\d{4})\b/,
       /\b[3-6]\d{3}\s?\d{2}\S{2}\s+\S{4}\s+(\d{4})\b/,
       /(?:visa|mastercard|master\s+card|amex|american\s+express|debit|credit)[\s:\-#]*(?:[\d\s\*xX]{8,15})?(\d{4})\b/i,
       /(?:card|kad)\s*(?:no)?[\s:\-#]*(?:[\d\s\*xX]{8,15})?(\d{4})\b/i,
@@ -1104,8 +1119,14 @@ const UI = (() => {
   function readText(text) {
     if (!text || !text.trim()) return false;
     close();
-    showForm(OCR.parse(text), 'receipt');
+    showForm({ ...OCR.parse(text), raw_text: text }, 'receipt');
     return true;
+  }
+
+  function toggleRaw() {
+    const pre = $('raw-text'), show = pre.style.display === 'none';
+    pre.style.display = show ? '' : 'none';
+    $('raw-toggle').textContent = show ? 'Hide scanned text' : 'Show scanned text';
   }
 
   function readPasted() {
@@ -1123,12 +1144,12 @@ const UI = (() => {
     preview.style.display = 'block';
 
     try {
-      const { parsed } = await OCR.run(file, (pct, msg) => {
+      const { parsed, text } = await OCR.run(file, (pct, msg) => {
         $('ocr-prog').style.width = Math.min(pct,99) + '%';
         $('ocr-status').textContent = msg;
       });
       close();
-      showForm(parsed, 'receipt');
+      showForm({ ...parsed, raw_text: text }, 'receipt');
     } catch(err) {
       close();
       alert('Could not read receipt. Please enter manually.\n\n(' + err.message + ')');
@@ -1155,15 +1176,17 @@ const UI = (() => {
     _editId = editId;
     _pendingDup = null;
     $('merge-slot').innerHTML = '';
+    $('form-card-row').classList.remove('need');
 
     const cards = await DB.getCards();
     const sel   = $('f-card');
     // Prepend Cash option
-    sel.innerHTML = `<option value="">💵 Cash</option>` +
+    sel.innerHTML = `<option value="?" disabled hidden>Choose card</option><option value="">💵 Cash</option>` +
       cards.map(c => `<option value="${c.last4}">${esc(c.name)}&nbsp;·${c.last4}</option>`).join('');
 
     // Auto-switch source when card changes
     sel.onchange = () => {
+      $('form-card-row').classList.remove('need');
       const src = $('f-src');
       if (!sel.value) { src.value = 'cash'; }
       else if (src.value === 'cash') { src.value = 'manual'; }
@@ -1186,17 +1209,24 @@ const UI = (() => {
       const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
       if (matched) sel.value = matched.last4;
     } else if (srcDefault === 'receipt') {
-      // Printed number may be an Apple Pay device number — check learned aliases, then card network
+      // Unknown number: a card picked for it before, else the only saved card on that network,
+      // else leave it for the user to choose (never silently Cash)
       const aliases = (await DB.getSetting('card_aliases')) || {};
       let pick = prefill.card_last4 && aliases[prefill.card_last4];
       if (!pick && prefill.card_network) {
         const net = cards.filter(c => c.name.toLowerCase().includes(prefill.card_network));
-        if (net.length) pick = net[0].last4;
+        if (net.length === 1) pick = net[0].last4;
       }
-      if (!pick && prefill.card_last4 && cards.length) pick = cards[0].last4;
-      if (pick && has(pick)) sel.value = pick;
+      sel.value = (pick && has(pick)) ? pick : '?';
       if (prefill.card_last4) _printedLast4 = prefill.card_last4;
     }
+
+    // Raw text from the scan, for checking a wrong field
+    const raw = prefill.raw_text || '';
+    $('raw-wrap').style.display = raw ? '' : 'none';
+    $('raw-text').textContent = raw;
+    $('raw-text').style.display = 'none';
+    $('raw-toggle').textContent = 'Show scanned text';
 
     $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : 'New Entry');
     $('form-save').textContent  = editId ? 'Save Changes' : 'Save Entry';
@@ -1219,6 +1249,7 @@ const UI = (() => {
     if (!merchant) { $('f-merchant').focus(); return; }
     if (!amount || amount <= 0) { $('f-amount').focus(); return; }
     if (!date) return;
+    if (card_last4 === '?') { $('f-card').focus(); $('form-card-row').classList.add('need'); return; }
 
     const cards   = await DB.getCards();
     const isCash  = !card_last4;
@@ -1462,7 +1493,7 @@ const UI = (() => {
 
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
-    showAdd, startScan, startLibrary, scanReceipt, confirmShortcutReady, showPaste, readPasted, readText, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
+    showAdd, startScan, startLibrary, scanReceipt, confirmShortcutReady, showPaste, readPasted, readText, toggleRaw, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
     showDetail, showExport, showSettings, addCard, editDevices, removeCard, showShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
