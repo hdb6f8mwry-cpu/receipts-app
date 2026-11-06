@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Receipts">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>Receipt Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#f2f2f7;--surface:#fff;--surface2:#f2f2f7;--surface3:#e5e5ea;
+  --text:#000;--text2:rgba(60,60,67,.75);--text3:#6e6e73;
+  --accent:#007aff;--accent-bg:#e8f1ff;
+  --green:#34c759;--orange:#ff9500;--red:#ff3b30;
+  --sep:rgba(60,60,67,.18);
+  --radius:12px;
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-b:env(safe-area-inset-bottom,0px);
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#000;--surface:#1c1c1e;--surface2:#2c2c2e;--surface3:#3a3a3c;
+    --text:#fff;--text2:rgba(235,235,245,.6);--text3:#98989f;
+    --accent:#0a84ff;--accent-bg:#1a2d4a;
+    --green:#30d158;--orange:#ff9f0a;--red:#ff453a;
+    --sep:rgba(84,84,88,.65);
+  }
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{display:flex;flex-direction:column;max-width:480px;margin:0 auto}
+
+/* ---- Header ---- */
+.app-header{position:sticky;top:0;z-index:10;background:var(--surface);border-bottom:1px solid var(--sep);padding:calc(var(--safe-t) + 10px) 16px 10px;display:flex;align-items:center;justify-content:space-between}
+.month-nav{display:flex;align-items:center;gap:4px}
+.month-btn{background:none;border:none;color:var(--accent);font-size:22px;cursor:pointer;padding:4px 10px;border-radius:8px;line-height:1;touch-action:manipulation}
+.month-btn:active{background:var(--accent-bg)}
+.month-label{font-size:17px;font-weight:600;min-width:140px;text-align:center}
+.hdr-btn{background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;padding:4px 6px;border-radius:8px;touch-action:manipulation}
+.hdr-btn:active{background:var(--accent-bg)}
+
+/* ---- Main ---- */
+.main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px calc(var(--safe-b) + 88px)}
+
+/* ---- Summary card ---- */
+.summary-card{background:var(--accent);border-radius:20px;padding:20px;color:#fff;margin-bottom:12px}
+.summary-label{font-size:13px;opacity:.8;margin-bottom:2px}
+.summary-total{font-size:38px;font-weight:700;letter-spacing:-1.5px;line-height:1.1}
+.summary-cards{margin-top:14px;display:flex;flex-direction:column;gap:5px}
+.summary-row{display:flex;justify-content:space-between;font-size:14px;opacity:.9}
+
+/* ---- Segmented control ---- */
+.seg{background:var(--surface3);border-radius:10px;padding:2px;display:flex;gap:2px;margin-bottom:14px}
+.seg-btn{flex:1;border:none;background:none;padding:7px 2px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;touch-action:manipulation;transition:background .15s,color .15s;white-space:nowrap}
+.seg-btn.on{background:var(--surface);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.12);font-weight:600}
+
+/* ---- Section ---- */
+.section{background:var(--surface);border-radius:var(--radius);overflow:hidden;margin-bottom:12px}
+.section-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;padding:14px 14px 6px}
+
+/* ---- Group header (inside section, used by all views) ---- */
+.grp-hdr{display:flex;justify-content:space-between;align-items:center;padding:10px 14px 8px}
+.grp-name{font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.grp-amt{font-size:13px;font-weight:600;color:var(--text3)}
+
+/* ---- Entry row ---- */
+.entry-row{display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--sep);cursor:pointer;gap:11px;touch-action:manipulation}
+.entry-row:active{background:var(--surface2)}
+.entry-icon{width:34px;height:34px;border-radius:9px;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.entry-icon.cash{background:rgba(52,199,89,.12)}
+.entry-main{flex:1;min-width:0}
+.entry-merchant{font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.entry-meta{font-size:12px;color:var(--text3);margin-top:2px;display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.badge{font-size:11px;padding:1px 6px;border-radius:4px;background:var(--surface2);color:var(--text3);font-weight:500}
+.badge-cat{background:var(--accent-bg);color:var(--accent)}
+.entry-amount{font-size:15px;font-weight:600;white-space:nowrap}
+
+/* ---- Empty state ---- */
+.empty{text-align:center;padding:48px 20px;color:var(--text3)}
+.empty .ico{font-size:46px;margin-bottom:10px}
+.empty p{font-size:15px;line-height:1.5}
+
+/* ---- FAB ---- */
+.fab{position:fixed;bottom:calc(var(--safe-b) + 18px);right:18px;width:56px;height:56px;border-radius:28px;background:var(--accent);color:#fff;border:none;font-size:30px;cursor:pointer;box-shadow:0 4px 18px rgba(0,122,255,.4);display:flex;align-items:center;justify-content:center;z-index:20;touch-action:manipulation;line-height:1}
+.fab:active{transform:scale(.92)}
+
+/* ---- Sheet overlay ---- */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:30;display:none;align-items:flex-end}
+.overlay.open{display:flex;animation:fadein .2s}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes slideup{from{transform:translateY(100%)}to{transform:translateY(0)}}
+
+/* ---- Sheet ---- */
+.sheet{background:var(--surface);border-radius:22px 22px 0 0;width:100%;max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(var(--safe-b) + 16px);animation:slideup .24s cubic-bezier(.32,0,.67,0)}
+.handle{width:36px;height:4px;background:var(--sep);border-radius:2px;margin:10px auto 0}
+.sheet-title{font-size:17px;font-weight:600;text-align:center;padding:14px 20px 6px}
+
+/* ---- Add options ---- */
+.opt-btn{display:flex;align-items:center;gap:14px;padding:14px;background:var(--surface2);border:none;border-radius:var(--radius);cursor:pointer;font-size:16px;color:var(--text);width:calc(100% - 28px);margin:5px 14px 0;text-align:left;touch-action:manipulation}
+.opt-btn:active{opacity:.7}
+.opt-ico{font-size:22px;width:34px;text-align:center}
+.opt-label{font-weight:500}
+.opt-sub{font-size:13px;color:var(--text3);margin-top:1px}
+
+/* ---- Form ---- */
+.form-wrap{padding:8px 14px}
+.form-group{background:var(--surface2);border-radius:var(--radius);overflow:hidden;margin-bottom:10px}
+.form-row{display:flex;align-items:center;padding:11px 13px;border-top:1px solid var(--sep);gap:8px}
+.form-row:first-child{border-top:none}
+label.fl{font-size:15px;color:var(--text3);min-width:82px;flex-shrink:0}
+input.fi,select.fi{flex:1;background:none;border:none;font-size:15px;color:var(--text);font-family:inherit;text-align:right;outline:none;min-width:0;cursor:text}
+input.fi::placeholder{color:var(--text3)}
+select.fi{cursor:pointer}
+
+/* ---- Buttons ---- */
+.btn-primary{display:block;width:calc(100% - 28px);margin:4px 14px;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:16px;font-weight:600;cursor:pointer;touch-action:manipulation}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.45;cursor:default}
+.btn-cancel{display:block;width:calc(100% - 28px);margin:6px 14px 0;padding:13px;background:var(--surface2);color:var(--text3);border:none;border-radius:var(--radius);font-size:16px;cursor:pointer;touch-action:manipulation}
+.btn-delete{display:block;width:calc(100% - 28px);margin:4px 14px;padding:13px;background:rgba(255,59,48,.1);color:var(--red);border:none;border-radius:var(--radius);font-size:16px;font-weight:600;cursor:pointer}
+
+/* ---- OCR ---- */
+.ocr-wrap{padding:20px 14px;text-align:center}
+#ocr-preview{width:100%;max-height:260px;object-fit:contain;border-radius:var(--radius);margin-bottom:14px;display:none}
+.spinner{width:36px;height:36px;border:3px solid var(--sep);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:16px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prog-bar{width:100%;height:4px;background:var(--sep);border-radius:2px;overflow:hidden;margin:10px 0}
+.prog-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s}
+.ocr-status{font-size:14px;color:var(--text3)}
+
+/* ---- Toast ---- */
+.toast{position:fixed;bottom:calc(var(--safe-b) + 90px);left:50%;transform:translateX(-50%) translateY(16px);background:rgba(0,0,0,.82);color:#fff;padding:9px 18px;border-radius:18px;font-size:14px;font-weight:500;z-index:100;opacity:0;transition:opacity .2s,transform .2s;white-space:nowrap;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---- Detail fields ---- */
+.df{display:flex;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--sep);font-size:15px}
+.df:first-child{border-top:none}
+.dk{color:var(--text3)}
+.dv{font-weight:500;text-align:right}
+
+/* ---- Backup banner ---- */
+.bk-banner{background:rgba(255,149,0,.1);border:1px solid rgba(255,149,0,.28);border-radius:var(--radius);padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:14px}
+.bk-banner .bi{font-size:18px}
+.bk-banner .bt{flex:1;color:var(--text2)}
+.bk-banner button{background:var(--orange);color:#fff;border:none;border-radius:8px;padding:6px 11px;font-size:13px;font-weight:600;cursor:pointer;touch-action:manipulation}
+
+/* ---- Merge prompt ---- */
+.merge-box{background:var(--accent-bg);border-radius:var(--radius);padding:13px 14px;margin:0 14px 10px;font-size:14px}
+.merge-box p{margin-bottom:10px;color:var(--text);line-height:1.5}
+.merge-btns{display:flex;gap:8px}
+.merge-btns button{flex:1;padding:8px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;touch-action:manipulation}
+.merge-yes{background:var(--accent);color:#fff}
+.merge-no{background:var(--surface3);color:var(--text3)}
+
+/* ---- Export rows ---- */
+.exp-row{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border-top:1px solid var(--sep);cursor:pointer;touch-action:manipulation;font-size:15px}
+.exp-row:first-child{border-top:none}
+.exp-row:active{background:var(--surface2)}
+.exp-hint{font-size:13px;color:var(--text3)}
+
+/* ---- Settings ---- */
+.set-row{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-top:1px solid var(--sep);font-size:15px}
+.set-row:first-child{border-top:none}
+.set-rm{background:none;border:none;color:var(--red);font-size:13px;cursor:pointer;touch-action:manipulation}
+
+/* ---- Shortcut guide ---- */
+.guide-step{background:var(--surface2);border-radius:var(--radius);padding:13px;margin-bottom:10px;font-size:14px;line-height:1.6;color:var(--text2)}
+.guide-step strong{color:var(--text)}
+.guide-url{display:block;background:var(--bg);padding:8px 10px;border-radius:8px;margin-top:6px;font-size:12px;word-break:break-all;font-family:monospace;color:var(--accent)}
+.guide-warn{background:rgba(255,149,0,.1);border-radius:var(--radius);padding:13px;font-size:14px;line-height:1.5;color:var(--text2)}
+
+/* ---- Categories placeholder ---- */
+.cat-placeholder{background:var(--surface);border-radius:var(--radius);padding:28px 20px;text-align:center;margin-bottom:12px}
+.cat-placeholder .ico{font-size:40px;margin-bottom:10px}
+.cat-placeholder h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.cat-placeholder p{font-size:14px;color:var(--text3);line-height:1.6}
+.cat-uncategorised{background:var(--surface);border-radius:var(--radius);overflow:hidden;margin-bottom:12px}
+
+#camera-input{display:none}
+#import-input{display:none}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="month-nav">
+    <button class="month-btn" onclick="UI.prevMonth()">‹</button>
+    <span class="month-label" id="month-label">November 2026</span>
+    <button class="month-btn" onclick="UI.nextMonth()">›</button>
+  </div>
+  <div style="display:flex;gap:2px">
+    <button class="hdr-btn" onclick="UI.showExport()" title="Export">↑</button>
+    <button class="hdr-btn" onclick="UI.showSettings()" title="Settings">⚙</button>
+  </div>
+</header>
+
+<main class="main">
+  <div id="backup-slot"></div>
+  <div id="dashboard"></div>
+</main>
+
+<button class="fab" onclick="UI.showAdd()">+</button>
+<div class="toast" id="toast"></div>
+<input type="file" id="camera-input" accept="image/*" capture="environment">
+<input type="file" id="import-input" accept=".json">
+
+<!-- ======= ADD SHEET ======= -->
+<div class="overlay" id="sh-add">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Add Entry</div>
+    <button class="opt-btn" onclick="UI.startScan()">
+      <span class="opt-ico">📷</span>
+      <div><div class="opt-label">Scan Receipt</div><div class="opt-sub">Take a photo — text is read on your phone</div></div>
+    </button>
+    <button class="opt-btn" onclick="UI.showForm()">
+      <span class="opt-ico">💳</span>
+      <div><div class="opt-label">Card Payment</div><div class="opt-sub">Maybank, CIMB or other card</div></div>
+    </button>
+    <button class="opt-btn" onclick="UI.showCashForm()">
+      <span class="opt-ico">💵</span>
+      <div><div class="opt-label">Cash Payment</div><div class="opt-sub">No card — just amount and what for</div></div>
+    </button>
+    <button class="btn-cancel" onclick="UI.close()">Cancel</button>
+  </div>
+</div>
+
+<!-- ======= OCR SHEET ======= -->
+<div class="overlay" id="sh-ocr">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title" id="ocr-title">Reading Receipt…</div>
+    <div class="ocr-wrap">
+      <img id="ocr-preview" alt="Receipt">
+      <div id="ocr-spin" class="spinner"></div>
+      <div class="prog-bar"><div class="prog-fill" id="ocr-prog"></div></div>
+      <div class="ocr-status" id="ocr-status">Preparing…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ======= FORM SHEET ======= -->
+<div class="overlay" id="sh-form">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title" id="form-title">New Entry</div>
+    <div id="merge-slot"></div>
+    <div class="form-wrap">
+      <div class="form-group">
+        <div class="form-row">
+          <label class="fl" for="f-merchant">Merchant</label>
+          <input class="fi" id="f-merchant" type="text" placeholder="e.g. McDonald's" autocomplete="off" autocorrect="off">
+        </div>
+        <div class="form-row">
+          <label class="fl" for="f-amount">Amount</label>
+          <input class="fi" id="f-amount" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+        </div>
+        <div class="form-row">
+          <label class="fl" for="f-date">Date</label>
+          <input class="fi" id="f-date" type="date">
+        </div>
+        <div class="form-row" id="form-card-row">
+          <label class="fl" for="f-card">Card</label>
+          <select class="fi" id="f-card"></select>
+        </div>
+        <div class="form-row">
+          <label class="fl" for="f-cat">Category</label>
+          <input class="fi" id="f-cat" type="text" placeholder="Optional">
+        </div>
+        <div class="form-row">
+          <label class="fl" for="f-src">Source</label>
+          <select class="fi" id="f-src">
+            <option value="manual">Manual</option>
+            <option value="receipt">Receipt photo</option>
+            <option value="apple-pay">Apple Pay</option>
+            <option value="cash">Cash</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <button class="btn-primary" id="form-save" onclick="UI.saveForm()">Save Entry</button>
+    <button class="btn-cancel" onclick="UI.close()">Cancel</button>
+  </div>
+</div>
+
+<!-- ======= DETAIL SHEET ======= -->
+<div class="overlay" id="sh-detail">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title" id="detail-title">Entry</div>
+    <div class="section" style="margin:8px 14px"><div id="detail-fields"></div></div>
+    <button class="btn-primary" id="detail-edit">Edit</button>
+    <button class="btn-delete" id="detail-del">Delete Entry</button>
+    <button class="btn-cancel" onclick="UI.close()">Close</button>
+  </div>
+</div>
+
+<!-- ======= EXPORT SHEET ======= -->
+<div class="overlay" id="sh-export">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Export &amp; Backup</div>
+    <div class="section-title">Export CSV</div>
+    <div class="section" style="margin:0 14px">
+      <div class="exp-row" onclick="Exp.csv('month');UI.close()">
+        <span>📅 This month</span><span class="exp-hint">CSV</span>
+      </div>
+      <div class="exp-row" onclick="Exp.csv('maybank');UI.close()">
+        <span>🏦 Maybank cycle (19th – 18th)</span><span class="exp-hint">CSV</span>
+      </div>
+      <div class="exp-row" onclick="Exp.csv('all');UI.close()">
+        <span>📋 All entries</span><span class="exp-hint">CSV</span>
+      </div>
+    </div>
+    <div class="section-title">Backup</div>
+    <div class="section" style="margin:0 14px">
+      <div class="exp-row" onclick="Exp.backup()">
+        <span>💾 Full backup (JSON)</span><span class="exp-hint">All data</span>
+      </div>
+      <div class="exp-row" onclick="Exp.restore()">
+        <span>📥 Restore from backup</span><span class="exp-hint">Replaces all</span>
+      </div>
+    </div>
+    <button class="btn-cancel" onclick="UI.close()">Close</button>
+  </div>
+</div>
+
+<!-- ======= SETTINGS SHEET ======= -->
+<div class="overlay" id="sh-settings">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Settings</div>
+    <div class="section-title">Your Cards</div>
+    <div class="section" style="margin:0 14px">
+      <div id="cards-list"></div>
+      <div class="set-row" onclick="UI.addCard()" style="cursor:pointer;color:var(--accent)">+ Add card</div>
+    </div>
+    <div class="section-title">Apple Pay</div>
+    <div class="section" style="margin:0 14px">
+      <div class="set-row" onclick="UI.showShortcut()" style="cursor:pointer">
+        <span>📱 Set up Apple Pay Shortcut</span><span style="color:var(--text3)">›</span>
+      </div>
+    </div>
+    <button class="btn-cancel" onclick="UI.close()">Close</button>
+  </div>
+</div>
+
+<!-- ======= SHORTCUT GUIDE SHEET ======= -->
+<div class="overlay" id="sh-shortcut">
+  <div class="sheet" style="padding:0 14px">
+    <div class="handle"></div>
+    <div class="sheet-title">Apple Pay Shortcut</div>
+    <div id="shortcut-body" style="padding-bottom:16px"></div>
+    <button class="btn-cancel" style="margin:0 0 6px" onclick="UI.close()">Close</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+// DATABASE
+// ============================================================
+const DB = (() => {
+  const NAME = 'receipt-tracker', VER = 1;
+  let _db;
+
+  const DEFAULT_CARDS = [
+    { name:'Maybank AMEX', last4:'6698' },
+    { name:'Maybank VISA', last4:'5717' },
+    { name:'CIMB VISA',    last4:'5481' },
+  ];
+
+  async function open() {
+    return new Promise((ok, fail) => {
+      const r = indexedDB.open(NAME, VER);
+      r.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('entries')) {
+          const s = db.createObjectStore('entries', { keyPath:'id', autoIncrement:true });
+          s.createIndex('date','date'); s.createIndex('card_last4','card_last4');
+        }
+        if (!db.objectStoreNames.contains('settings'))
+          db.createObjectStore('settings', { keyPath:'key' });
+      };
+      r.onsuccess = e => { _db = e.target.result; ok(); };
+      r.onerror   = () => fail(r.error);
+    });
+  }
+
+  const promReq = r => new Promise((ok,fail) => { r.onsuccess=()=>ok(r.result); r.onerror=()=>fail(r.error); });
+  const store   = (name, mode='readonly') => _db.transaction(name, mode).objectStore(name);
+
+  async function getSetting(key, def) {
+    const r = await promReq(store('settings').get(key));
+    return r ? r.value : def;
+  }
+  const setSetting = (key, value) => promReq(store('settings','readwrite').put({key, value}));
+
+  async function getCards() { return getSetting('cards', DEFAULT_CARDS); }
+  const saveCards = c => setSetting('cards', c);
+
+  async function addEntry(e) {
+    e.created_at = new Date().toISOString();
+    return promReq(store('entries','readwrite').add(e));
+  }
+
+  async function updateEntry(id, changes) {
+    const st = store('entries','readwrite');
+    const ex = await promReq(st.get(id));
+    if (!ex) return;
+    return promReq(store('entries','readwrite').put({...ex, ...changes}));
+  }
+
+  const deleteEntry = id => promReq(store('entries','readwrite').delete(id));
+  const allEntries  = ()  => promReq(store('entries').getAll());
+
+  async function entriesForMonth(y, m) {
+    const all = await allEntries();
+    return all.filter(e => { const d=new Date(e.date); return d.getFullYear()===y && d.getMonth()===m; });
+  }
+
+  async function findDup(entry) {
+    if (!entry.card_last4) return null; // don't dedup cash
+    const all = await allEntries();
+    const t = new Date(entry.date).getTime();
+    return all.find(ex =>
+      ex.id !== entry.id &&
+      ex.card_last4 === entry.card_last4 &&
+      Math.abs(parseFloat(ex.amount) - parseFloat(entry.amount)) < 0.02 &&
+      Math.abs(new Date(ex.date).getTime() - t) < 2 * 86400000
+    );
+  }
+
+  return { open, getSetting, setSetting, getCards, saveCards, addEntry, updateEntry, deleteEntry, allEntries, entriesForMonth, findDup };
+})();
+
+
+// ============================================================
+// OCR
+// ============================================================
+const OCR = (() => {
+  function parse(text) {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+    const rev   = [...lines].reverse();
+
+    // ----- Amount -----
+    let amount = null;
+    const amtPats = [
+      /grand\s+total\D*([\d,]+\.\d{2})/i,
+      /total\s+amount\D*([\d,]+\.\d{2})/i,
+      /(?:^|\s)total\D*([\d,]+\.\d{2})/i,
+      /jumlah\s*besar?\D*([\d,]+\.\d{2})/i,
+      /jumlah\D*([\d,]+\.\d{2})/i,
+      /amount\s+due\D*([\d,]+\.\d{2})/i,
+      /rm\s*([\d,]+\.\d{2})\s*$/i,
+    ];
+    outer:
+    for (const p of amtPats) {
+      for (const l of rev) {
+        if (/sub.?total/i.test(l)) continue;
+        const m = l.match(p);
+        if (m) { amount = parseFloat(m[1].replace(/,/g,'')); break outer; }
+      }
+    }
+    if (!amount) {
+      const hits = [...text.matchAll(/rm\s*([\d,]+\.\d{2})/gi)]
+        .map(m => parseFloat(m[1].replace(/,/g,'')))
+        .filter(n => n > 0 && n < 100000);
+      if (hits.length) amount = Math.max(...hits);
+    }
+
+    // ----- Date -----
+    let date = null;
+    const dtPats = [
+      { r:/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, parse:m => new Date(+m[3], +m[2]-1, +m[1]) },
+      { r:/(\d{4})[\/\-](\d{2})[\/\-](\d{2})/,     parse:m => new Date(+m[1], +m[2]-1, +m[3]) },
+      { r:/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{4})/i,
+        parse:m => { const mn={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11}; return new Date(+m[3], mn[m[2].slice(0,3).toLowerCase()], +m[1]); }},
+      { r:/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})(?!\d)/, parse:m => new Date(2000+ +m[3], +m[2]-1, +m[1]) },
+    ];
+    for (const l of lines) {
+      for (const p of dtPats) {
+        const m = l.match(p.r);
+        if (m) {
+          try {
+            const d = p.parse(m);
+            if (!isNaN(d) && d.getFullYear() > 2000 && d <= new Date()) {
+              date = d.toISOString().slice(0,10); break;
+            }
+          } catch(e) {}
+        }
+      }
+      if (date) break;
+    }
+    if (!date) date = new Date().toISOString().slice(0,10);
+
+    // ----- Merchant -----
+    let merchant = '';
+    for (const l of lines.slice(0,6)) {
+      if (l.length > 2 && !/^\d|^receipt|^tax\s+inv|^invoice|^cashier|^tel:/i.test(l)) {
+        merchant = l.replace(/[^\w\s\-&'\.\/]/g,'').trim();
+        if (merchant.length > 2) break;
+      }
+    }
+
+    // ----- Card last 4 -----
+    let card_last4 = null;
+    const cPats = [
+      /(?:visa|mastercard|master\s+card|amex|american\s+express|debit|credit)[^\d]*(?:[\d\s\*]{8,15})?(\d{4})/i,
+      /\*{3,}\s*(\d{4})/,
+      /(?:card|kad)[^\d]*(?:\d[\d\s]{10,15})?(\d{4})/i,
+    ];
+    for (const l of lines) {
+      for (const p of cPats) {
+        const m = l.match(p);
+        if (m) { card_last4 = m[1]; break; }
+      }
+      if (card_last4) break;
+    }
+
+    return { amount, date, merchant, card_last4 };
+  }
+
+  async function run(file, onProgress) {
+    const worker = await Tesseract.createWorker('eng', 1, {
+      workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
+      langPath:   'https://tessdata.projectnaptha.com/4.0.0',
+      corePath:   'https://cdn.jsdelivr.net/npm/tesseract.js-core@4.0.4/tesseract-core.wasm.js',
+      logger: m => {
+        const pct = Math.round(m.progress * 100);
+        if (m.status === 'loading tesseract core')       onProgress(pct * .2,          'Loading engine…');
+        if (m.status === 'loading language traineddata') onProgress(20 + pct * .3,  'Loading language…');
+        if (m.status === 'recognizing text')             onProgress(50 + pct * .5,    `Reading… ${pct}%`);
+      },
+    });
+    try {
+      const { data: { text } } = await worker.recognize(file);
+      return { text, parsed: parse(text) };
+    } finally {
+      worker.terminate();
+    }
+  }
+
+  return { run, parse };
+})();
+
+
+// ============================================================
+// EXPORT
+// ============================================================
+const Exp = (() => {
+  function toCSV(entries) {
+    const hdr = ['Date','Merchant','Amount (MYR)','Card','Category','Source'];
+    const rows = entries.map(e => {
+      const d = new Date(e.date + 'T00:00:00');
+      const ds = d.toLocaleDateString('en-MY',{day:'2-digit',month:'2-digit',year:'numeric'});
+      const cardStr = (!e.card_last4 || e.source === 'cash') ? 'Cash' : (e.card_name||'') + ' \xb7' + (e.card_last4||'');
+      return [
+        ds,
+        '"' + (e.merchant||'').replace(/"/g,'""') + '"',
+        (+e.amount||0).toFixed(2),
+        '"' + cardStr + '"',
+        '"' + (e.category||'').replace(/"/g,'""') + '"',
+        e.source||'manual',
+      ];
+    });
+    return [hdr.join(','), ...rows.map(r => r.join(','))].join('\n');
+  }
+
+  async function share(content, filename, type) {
+    const blob = new Blob([content], { type });
+    const file = new File([blob], filename, { type });
+    if (navigator.share && navigator.canShare && navigator.canShare({ files:[file] })) {
+      await navigator.share({ files:[file], title:filename });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }
+  }
+
+  async function csv(type) {
+    const all = (await DB.allEntries()).sort((a,b) => a.date.localeCompare(b.date));
+    const now = new Date();
+    let entries, fn;
+
+    if (type === 'month') {
+      const [y,m] = [now.getFullYear(), now.getMonth()];
+      entries = all.filter(e => { const d=new Date(e.date); return d.getFullYear()===y && d.getMonth()===m; });
+      fn = `receipts_${now.toLocaleDateString('en-MY',{month:'long',year:'numeric'}).replace(' ','_')}.csv`;
+    } else if (type === 'maybank') {
+      const end   = new Date(now.getFullYear(), now.getMonth(), 18, 23, 59, 59);
+      const start = new Date(now.getFullYear(), now.getMonth()-1, 19);
+      entries = all.filter(e => { const d=new Date(e.date); return d>=start && d<=end; });
+      const sf = start.toLocaleDateString('en-MY',{day:'2-digit',month:'short'});
+      const ef = end.toLocaleDateString('en-MY',{day:'2-digit',month:'short',year:'numeric'});
+      fn = `receipts_maybank_${sf.replace(' ','')}_to_${ef.replace(/ /g,'')}.csv`;
+    } else {
+      entries = all;
+      fn = `receipts_all_${now.toISOString().slice(0,10)}.csv`;
+    }
+
+    await share(toCSV(entries), fn, 'text/csv;charset=utf-8;');
+    await DB.setSetting('export_last_date', new Date().toISOString());
+    UI.toast('Exported ' + entries.length + ' entr' + (entries.length===1?'y':'ies'));
+    UI.renderBanner();
+  }
+
+  async function backup() {
+    const entries = await DB.allEntries();
+    const cards   = await DB.getCards();
+    const payload = JSON.stringify({ version:1, exported:new Date().toISOString(), entries, cards }, null, 2);
+    await share(payload, `receipts_backup_${new Date().toISOString().slice(0,10)}.json`, 'application/json');
+    await DB.setSetting('export_last_date', new Date().toISOString());
+    UI.toast('Backup saved');
+    UI.renderBanner();
+  }
+
+  function restore() {
+    const inp = document.getElementById('import-input');
+    inp.onchange = async () => {
+      if (!inp.files.length) return;
+      try {
+        const data = JSON.parse(await inp.files[0].text());
+        if (!Array.isArray(data.entries)) throw new Error('Invalid file');
+        if (!confirm(`Restore ${data.entries.length} entries? This replaces ALL current data.`)) return;
+        const all = await DB.allEntries();
+        for (const e of all) await DB.deleteEntry(e.id);
+        for (const e of data.entries) { const {id,...rest}=e; await DB.addEntry(rest); }
+        if (data.cards) await DB.saveCards(data.cards);
+        UI.toast('Restored');
+        UI.close();
+        UI.renderDashboard();
+      } catch(err) { alert('Restore failed: ' + err.message); }
+      inp.value = '';
+    };
+    inp.click();
+  }
+
+  return { csv, backup, restore };
+})();
+
+
+// ============================================================
+// UI
+// ============================================================
+const UI = (() => {
+  let _month = new Date();
+  let _view  = 'cards';   // 'cards' | 'merchant' | 'categories'
+  let _editId = null;
+  let _pendingDup = null;
+
+  // ----- Helpers -----
+  const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const fmt$ = n => 'RM\u00a0' + (+n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  const fmtDate = iso => iso ? new Date(iso+'T00:00:00').toLocaleDateString('en-MY',{day:'numeric',month:'short',year:'numeric'}) : '';
+
+  function srcIcon(s) {
+    if (s === 'receipt')   return { icon:'📷', cls:'' };
+    if (s === 'apple-pay') return { icon:'💳', cls:'' };
+    if (s === 'cash')      return { icon:'💵', cls:'cash' };
+    return { icon:'✏️', cls:'' };
+  }
+
+  const isCashEntry = e => e.source === 'cash' || (!e.card_last4 && e.card_name === 'Cash');
+
+  // ----- Shared: single entry row HTML -----
+  function entryRowHTML(e, cards) {
+    const cash = isCashEntry(e);
+    const card = cash ? null : cards.find(c => c.last4 === e.card_last4);
+    const cardLbl = cash ? '' : (card ? card.name + '\u00a0·' + e.card_last4 : (e.card_last4 ? '·'+e.card_last4 : ''));
+    const si = srcIcon(e.source);
+    return `<div class="entry-row" onclick="UI.showDetail(${e.id})">
+      <div class="entry-icon ${si.cls}">${si.icon}</div>
+      <div class="entry-main">
+        <div class="entry-merchant">${esc(e.merchant||'Unknown')}</div>
+        <div class="entry-meta">
+          <span>${fmtDate(e.date)}</span>
+          ${cardLbl?`<span class="badge">${esc(cardLbl)}</span>`:''}
+          ${e.category?`<span class="badge badge-cat">${esc(e.category)}</span>`:''}
+        </div>
+      </div>
+      <div class="entry-amount">${fmt$(e.amount)}</div>
+    </div>`;
+  }
+
+  function emptyHTML(month) {
+    return `<div class="empty"><div class="ico">🧾</div><p>No entries for ${month || _month.toLocaleDateString('en-US',{month:'long'})}.<br>Tap + to add one.</p></div>`;
+  }
+
+  // ----- View: Card & Cash -----
+  function renderCardView(entries, cards) {
+    if (!entries.length) return emptyHTML();
+    let html = '';
+    const groups = [
+      ...cards.map(c => ({ label: c.name + '\u00a0·' + c.last4, key: c.last4, isCash: false })),
+      { label: 'Cash', key: '__cash__', isCash: true },
+    ];
+    for (const g of groups) {
+      const ge = entries.filter(e => g.isCash ? isCashEntry(e) : e.card_last4 === g.key);
+      if (!ge.length) continue;
+      const total = ge.reduce((s,e)=>s+(+e.amount||0),0);
+      html += `<div class="section">
+        <div class="grp-hdr">
+          <span class="grp-name">${g.isCash?'💵 ':''}<span style="color:var(--text)">${esc(g.label)}</span></span>
+          <span class="grp-amt">${fmt$(total)}</span>
+        </div>
+        ${ge.map(e=>entryRowHTML(e,cards)).join('')}
+      </div>`;
+    }
+    return html || emptyHTML();
+  }
+
+  // ----- View: Merchant -----
+  function renderMerchantView(entries, cards) {
+    if (!entries.length) return emptyHTML();
+    const byM = {};
+    entries.forEach(e => {
+      const k = (e.merchant||'Unknown').trim();
+      if (!byM[k]) byM[k] = [];
+      byM[k].push(e);
+    });
+    const groups = Object.entries(byM)
+      .sort((a,b) => b[1].reduce((s,e)=>s+(+e.amount||0),0) - a[1].reduce((s,e)=>s+(+e.amount||0),0));
+    return groups.map(([name, ge]) => {
+      const total = ge.reduce((s,e)=>s+(+e.amount||0),0);
+      return `<div class="section">
+        <div class="grp-hdr">
+          <span class="grp-name" style="color:var(--text)">${esc(name)}</span>
+          <span class="grp-amt">${fmt$(total)}</span>
+        </div>
+        ${ge.map(e=>entryRowHTML(e,cards)).join('')}
+      </div>`;
+    }).join('');
+  }
+
+  // ----- View: Categories -----
+  function renderCategoriesView(entries, cards) {
+    if (!entries.length) return emptyHTML();
+
+    const withCat = entries.filter(e => e.category);
+    const noCat   = entries.filter(e => !e.category);
+
+    if (!withCat.length) {
+      return `<div class="cat-placeholder">
+        <div class="ico">🏷</div>
+        <h3>No categories yet</h3>
+        <p>Tap any entry to add a category.<br><br>
+        After a few weeks, export your entries and ask Claude to suggest a set of categories that fits how you actually spend — then type them in here.</p>
+      </div>
+      ${noCat.length?`<div class="cat-uncategorised">
+        <div class="grp-hdr"><span class="grp-name" style="color:var(--text3)">All entries</span><span class="grp-amt" style="color:var(--text3)">${fmt$(noCat.reduce((s,e)=>s+(+e.amount||0),0))}</span></div>
+        ${noCat.map(e=>entryRowHTML(e,cards)).join('')}
+      </div>`:''}`;
+    }
+
+    // Group by category
+    const byC = {};
+    withCat.forEach(e => {
+      const k = (e.category||'').trim();
+      if (!byC[k]) byC[k] = [];
+      byC[k].push(e);
+    });
+    const catGroups = Object.entries(byC)
+      .sort((a,b) => b[1].reduce((s,e)=>s+(+e.amount||0),0) - a[1].reduce((s,e)=>s+(+e.amount||0),0));
+
+    let html = catGroups.map(([cat, ge]) => {
+      const total = ge.reduce((s,e)=>s+(+e.amount||0),0);
+      return `<div class="section">
+        <div class="grp-hdr">
+          <span class="grp-name" style="color:var(--text)">${esc(cat)}</span>
+          <span class="grp-amt">${fmt$(total)}</span>
+        </div>
+        ${ge.map(e=>entryRowHTML(e,cards)).join('')}
+      </div>`;
+    }).join('');
+
+    if (noCat.length) {
+      const total = noCat.reduce((s,e)=>s+(+e.amount||0),0);
+      html += `<div class="section">
+        <div class="grp-hdr">
+          <span class="grp-name" style="color:var(--text3)">Uncategorised</span>
+          <span class="grp-amt" style="color:var(--text3)">${fmt$(total)}</span>
+        </div>
+        ${noCat.map(e=>entryRowHTML(e,cards)).join('')}
+      </div>`;
+    }
+    return html;
+  }
+
+  // ----- View switcher -----
+  function setView(v) {
+    _view = v;
+    renderDashboard();
+  }
+
+  function segHTML() {
+    const labels = { cards:'Card & Cash', merchant:'Merchant', categories:'Categories' };
+    return `<div class="seg">${['cards','merchant','categories'].map(v=>
+      `<button class="seg-btn${_view===v?' on':''}" onclick="UI.setView('${v}')">${labels[v]}</button>`
+    ).join('')}</div>`;
+  }
+
+  // ----- Sheets -----
+  const $  = id => document.getElementById(id);
+  const open = id => {
+    document.querySelectorAll('.overlay').forEach(el => el.classList.remove('open'));
+    $(id).classList.add('open');
+  };
+
+  function close() {
+    document.querySelectorAll('.overlay').forEach(el => el.classList.remove('open'));
+    _editId = _pendingDup = null;
+  }
+
+  document.querySelectorAll('.overlay').forEach(el =>
+    el.addEventListener('click', e => { if (e.target === el) close(); })
+  );
+
+  // ----- Month nav -----
+  function prevMonth() { _month = new Date(_month.getFullYear(), _month.getMonth()-1, 1); renderDashboard(); }
+  function nextMonth() {
+    const nxt = new Date(_month.getFullYear(), _month.getMonth()+1, 1);
+    if (nxt <= new Date()) { _month = nxt; renderDashboard(); }
+  }
+
+  // ----- Dashboard -----
+  async function renderDashboard() {
+    const y = _month.getFullYear(), m = _month.getMonth();
+    $('month-label').textContent = _month.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    const entries = await DB.entriesForMonth(y, m);
+    entries.sort((a,b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at));
+    const cards = await DB.getCards();
+
+    const total     = entries.reduce((s,e) => s + (+e.amount||0), 0);
+    const byCard    = {};
+    const cashTotal = entries.filter(isCashEntry).reduce((s,e)=>s+(+e.amount||0),0);
+    entries.filter(e=>!isCashEntry(e)).forEach(e => { byCard[e.card_last4] = (byCard[e.card_last4]||0) + (+e.amount||0); });
+
+    // ----- Summary card -----
+    let summaryRows = '';
+    for (const c of cards) {
+      const a = byCard[c.last4] || 0;
+      if (a === 0 && entries.length > 0) continue;
+      summaryRows += `<div class="summary-row"><span>${esc(c.name)}&nbsp;·${c.last4}</span><span>${fmt$(a)}</span></div>`;
+    }
+    if (cashTotal > 0 || entries.length === 0) {
+      if (cashTotal > 0)
+        summaryRows += `<div class="summary-row"><span>💵 Cash</span><span>${fmt$(cashTotal)}</span></div>`;
+    }
+
+    const summaryCard = `<div class="summary-card">
+      <div class="summary-label">Total spending</div>
+      <div class="summary-total">${fmt$(total)}</div>
+      <div class="summary-cards">${summaryRows}</div>
+    </div>`;
+
+    // ----- View content -----
+    let viewContent = '';
+    if (_view === 'cards')      viewContent = renderCardView(entries, cards);
+    if (_view === 'merchant')   viewContent = renderMerchantView(entries, cards);
+    if (_view === 'categories') viewContent = renderCategoriesView(entries, cards);
+
+    $('dashboard').innerHTML = summaryCard + segHTML() + viewContent;
+    renderBanner();
+  }
+
+  async function renderBanner() {
+    const last = await DB.getSetting('export_last_date', null);
+    const slot = $('backup-slot');
+    const days = last ? Math.floor((Date.now()-new Date(last))/86400000) : null;
+    const all  = await DB.allEntries();
+    if ((!last && all.length >= 5) || days >= 7) {
+      const msg = !last ? "You haven't exported yet." : `Last export was ${days} days ago.`;
+      slot.innerHTML = `<div class="bk-banner"><span class="bi">${!last?'⚠️':'🔔'}</span><span class="bt">${msg}</span><button onclick="UI.showExport()">Export</button></div>`;
+    } else {
+      slot.innerHTML = '';
+    }
+  }
+
+  // ----- Add flow -----
+  const showAdd = () => open('sh-add');
+
+  function startScan() {
+    close();
+    $('camera-input').click();
+  }
+
+  $('camera-input').addEventListener('change', async e => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    e.target.value = '';
+
+    open('sh-ocr');
+    $('ocr-title').textContent = 'Reading Receipt…';
+    $('ocr-status').textContent = 'Starting…';
+    $('ocr-prog').style.width = '0%';
+    $('ocr-spin').style.display = 'block';
+    const preview = $('ocr-preview');
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+
+    try {
+      const { parsed } = await OCR.run(file, (pct, msg) => {
+        $('ocr-prog').style.width = Math.min(pct,99) + '%';
+        $('ocr-status').textContent = msg;
+      });
+      close();
+      showForm(parsed, 'receipt');
+    } catch(err) {
+      close();
+      alert('Could not read receipt. Please enter manually.\n\n(' + err.message + ')');
+      showForm({}, 'receipt');
+    }
+  });
+
+  // ----- Form -----
+  async function showForm(prefill={}, srcDefault='manual', editId=null) {
+    _editId = editId;
+    _pendingDup = null;
+    $('merge-slot').innerHTML = '';
+
+    const cards = await DB.getCards();
+    const sel   = $('f-card');
+    // Prepend Cash option
+    sel.innerHTML = `<option value="">💵 Cash</option>` +
+      cards.map(c => `<option value="${c.last4}">${esc(c.name)}&nbsp;·${c.last4}</option>`).join('');
+
+    // Auto-switch source when card changes
+    sel.onchange = () => {
+      const src = $('f-src');
+      if (!sel.value) { src.value = 'cash'; }
+      else if (src.value === 'cash') { src.value = 'manual'; }
+    };
+
+    $('f-merchant').value = prefill.merchant || '';
+    $('f-amount').value   = prefill.amount   ? (+prefill.amount).toFixed(2) : '';
+    $('f-date').value     = prefill.date     || new Date().toISOString().slice(0,10);
+    $('f-cat').value      = prefill.category || '';
+    $('f-src').value      = prefill.source   || srcDefault;
+
+    // Select card
+    if (prefill.source === 'cash' || srcDefault === 'cash') {
+      sel.value = ''; // Cash
+    } else if (prefill.card_last4) {
+      const opt = [...sel.options].find(o => o.value === prefill.card_last4);
+      if (opt) sel.value = opt.value;
+    } else if (prefill.card_name) {
+      const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
+      if (matched) sel.value = matched.last4;
+    }
+
+    $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : 'New Entry');
+    $('form-save').textContent  = editId ? 'Save Changes' : 'Save Entry';
+    open('sh-form');
+  }
+
+  // Cash shortcut: opens form with Cash pre-selected
+  function showCashForm() {
+    showForm({ source:'cash' }, 'cash');
+  }
+
+  async function saveForm() {
+    const merchant  = $('f-merchant').value.trim();
+    const amount    = parseFloat($('f-amount').value);
+    const date      = $('f-date').value;
+    const card_last4 = $('f-card').value; // '' for Cash
+    const category  = $('f-cat').value.trim();
+    const source    = $('f-src').value;
+
+    if (!merchant) { $('f-merchant').focus(); return; }
+    if (!amount || amount <= 0) { $('f-amount').focus(); return; }
+    if (!date) return;
+
+    const cards   = await DB.getCards();
+    const isCash  = !card_last4;
+    const card    = isCash ? null : cards.find(c => c.last4 === card_last4);
+    const entry   = {
+      merchant, amount, date,
+      card_last4: isCash ? '' : card_last4,
+      card_name:  isCash ? 'Cash' : (card ? card.name : ''),
+      category,
+      source: isCash ? 'cash' : source,
+    };
+
+    if (_editId) {
+      await DB.updateEntry(_editId, entry);
+      toast('Entry updated');
+      close();
+      renderDashboard();
+      return;
+    }
+
+    const dup = await DB.findDup(entry);
+    if (dup && !_pendingDup) {
+      _pendingDup = dup;
+      $('merge-slot').innerHTML = `<div class="merge-box">
+        <p>⚡ Looks like a duplicate of a ${srcIcon(dup.source).icon} ${dup.source} charge:<br>
+        <strong>${esc(dup.merchant)}</strong> &middot; ${fmt$(dup.amount)} &middot; ${fmtDate(dup.date)}</p>
+        <div class="merge-btns">
+          <button class="merge-yes" onclick="UI.doMerge()">Merge</button>
+          <button class="merge-no"  onclick="UI.skipMerge()">Keep both</button>
+        </div>
+      </div>`;
+      return;
+    }
+
+    await DB.addEntry(entry);
+    toast('Entry saved');
+    close();
+    renderDashboard();
+  }
+
+  async function doMerge() {
+    if (!_pendingDup) return;
+    const updates = {};
+    const merchant = $('f-merchant').value.trim();
+    const src = $('f-src').value;
+    if (_pendingDup.source === 'apple-pay' && src === 'receipt') updates.source = 'receipt';
+    if (!_pendingDup.merchant || _pendingDup.merchant === 'Unknown') updates.merchant = merchant;
+    if ($('f-cat').value) updates.category = $('f-cat').value.trim();
+    await DB.updateEntry(_pendingDup.id, updates);
+    toast('Entries merged');
+    close();
+    renderDashboard();
+  }
+
+  function skipMerge() {
+    _pendingDup = null;
+    $('merge-slot').innerHTML = '';
+    saveForm();
+  }
+
+  // ----- Detail -----
+  async function showDetail(id) {
+    const all   = await DB.allEntries();
+    const entry = all.find(e => e.id === id);
+    if (!entry) return;
+    const cards = await DB.getCards();
+    const cash  = isCashEntry(entry);
+    const card  = cash ? null : cards.find(c => c.last4 === entry.card_last4);
+
+    $('detail-title').textContent = entry.merchant || 'Entry';
+    $('detail-fields').innerHTML = [
+      ['Amount',   fmt$(entry.amount)],
+      ['Date',     fmtDate(entry.date)],
+      ['Paid with', cash ? '💵 Cash' : esc(card ? card.name + ' \xb7' + entry.card_last4 : entry.card_last4 || '—')],
+      ['Category', esc(entry.category || '—')],
+      ['Source',   srcIcon(entry.source).icon + ' ' + (entry.source || 'manual')],
+    ].map(([k,v]) => `<div class="df"><span class="dk">${k}</span><span class="dv">${v}</span></div>`).join('');
+
+    $('detail-edit').onclick = () => { close(); showForm(entry, entry.source, entry.id); };
+    $('detail-del').onclick  = async () => {
+      if (!confirm('Delete this entry?')) return;
+      await DB.deleteEntry(id);
+      close();
+      renderDashboard();
+      toast('Deleted');
+    };
+    open('sh-detail');
+  }
+
+  // ----- Export -----
+  const showExport = () => open('sh-export');
+
+  // ----- Settings -----
+  async function showSettings() {
+    const cards = await DB.getCards();
+    $('cards-list').innerHTML = cards.map((c,i) => `
+      <div class="set-row">
+        <span>${esc(c.name)}&nbsp;&middot;${c.last4}</span>
+        <button class="set-rm" onclick="UI.removeCard(${i})">Remove</button>
+      </div>`).join('');
+    open('sh-settings');
+  }
+
+  async function addCard() {
+    const name  = prompt('Card label (e.g. CIMB Mastercard)');
+    if (!name) return;
+    const last4 = prompt('Last 4 digits');
+    if (!last4 || !/^\d{4}$/.test(last4)) { alert('Enter exactly 4 digits'); return; }
+    const cards = await DB.getCards();
+    cards.push({ name: name.trim(), last4 });
+    await DB.saveCards(cards);
+    showSettings();
+  }
+
+  async function removeCard(i) {
+    const cards = await DB.getCards();
+    if (!confirm('Remove ' + cards[i].name + ' \xb7' + cards[i].last4 + '?')) return;
+    cards.splice(i, 1);
+    await DB.saveCards(cards);
+    showSettings();
+  }
+
+  // ----- Shortcut guide -----
+  function showShortcut() {
+    const url = location.origin + location.pathname;
+    $('shortcut-body').innerHTML = `
+      <div style="font-size:14px;line-height:1.6;color:var(--text2);padding-top:4px">
+        <p style="margin-bottom:12px">Each time you pay with Apple Pay, a Shortcut opens this app and saves the transaction automatically.</p>
+        <div class="guide-step">
+          <strong>Step 1 — Open Shortcuts app</strong><br>
+          Go to the <em>Automation</em> tab → tap <strong>+</strong> → <em>New Automation</em>
+        </div>
+        <div class="guide-step">
+          <strong>Step 2 — Choose trigger</strong><br>
+          Scroll to and tap <strong>Transaction</strong>. Leave all cards selected. Tap Next.
+        </div>
+        <div class="guide-step">
+          <strong>Step 3 — Add action</strong><br>
+          Tap <em>New Blank Automation</em> → <em>Add Action</em> → search <strong>Open URL</strong> → add it.<br><br>
+          Set the URL to:<code class="guide-url">${url}?ap=1&amp;amount=<strong>Amount</strong>&amp;merchant=<strong>Merchant Name</strong>&amp;card=<strong>Payment Method</strong></code>
+          Tap each bold word → choose the matching variable from <em>Transaction Details</em>.
+        </div>
+        <div class="guide-step">
+          <strong>Step 4 — Finish</strong><br>
+          Tap Done. Turn off <em>Ask Before Running</em> when prompted.
+        </div>
+        <div class="guide-warn">
+          <strong>⚠️ Apple Watch note</strong><br>
+          Payments made on Apple Watch may not trigger the automation. Add those manually.
+        </div>
+      </div>`;
+    open('sh-shortcut');
+  }
+
+  // ----- Toast -----
+  let _tt;
+  function toast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(_tt);
+    _tt = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  return {
+    prevMonth, nextMonth, renderDashboard, renderBanner,
+    showAdd, startScan, showForm, showCashForm, saveForm, doMerge, skipMerge,
+    showDetail, showExport, showSettings, addCard, removeCard, showShortcut,
+    setView, close, toast,
+    get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
+  };
+})();
+
+
+// ============================================================
+// APPLE PAY URL ENTRY
+// ============================================================
+async function handleApplePay() {
+  const p = new URLSearchParams(location.search);
+  if (!p.get('ap')) return;
+
+  const amount   = parseFloat(p.get('amount') || '0');
+  const merchant = decodeURIComponent(p.get('merchant') || '').replace(/\+/g,' ');
+  const cardRaw  = decodeURIComponent(p.get('card') || '').replace(/\+/g,' ');
+
+  history.replaceState({}, '', location.pathname);
+  if (!amount || amount <= 0) return;
+
+  const cards = await DB.getCards();
+  const card  = cards.find(c => cardRaw.includes(c.last4) || cardRaw.toLowerCase().includes(c.name.toLowerCase()));
+  const today = new Date().toISOString().slice(0,10);
+  const entry = { merchant, amount, date:today, card_last4: card?.last4||'', card_name: card?.name||cardRaw, category:'', source:'apple-pay' };
+
+  const dup = await DB.findDup(entry);
+  if (dup) { UI.toast('Already recorded \u2014 ' + merchant); return; }
+
+  if (!card) {
+    UI.showForm({ merchant, amount, date:today, source:'apple-pay' }, 'apple-pay');
+    return;
+  }
+
+  await DB.addEntry(entry);
+  UI.toast('\uD83D\uDCB3 Saved: ' + amount.toFixed(2) + ' at ' + merchant);
+}
+
+
+// ============================================================
+// BOOT
+// ============================================================
+(async () => {
+  await DB.open();
+  await handleApplePay();
+  UI.renderDashboard();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
