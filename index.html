@@ -182,6 +182,7 @@ select.fi{cursor:pointer}
 .cat-uncategorised{background:var(--surface);border-radius:var(--radius);overflow:hidden;margin-bottom:12px}
 
 #camera-input{display:none}
+#library-input{display:none}
 #import-input{display:none}
 </style>
 </head>
@@ -207,6 +208,7 @@ select.fi{cursor:pointer}
 <button class="fab" onclick="UI.showAdd()">+</button>
 <div class="toast" id="toast"></div>
 <input type="file" id="camera-input" accept="image/*" capture="environment">
+<input type="file" id="library-input" accept="image/*">
 <input type="file" id="import-input" accept=".json">
 
 <!-- ======= ADD SHEET ======= -->
@@ -216,7 +218,11 @@ select.fi{cursor:pointer}
     <div class="sheet-title">Add Entry</div>
     <button class="opt-btn" onclick="UI.startScan()">
       <span class="opt-ico">📷</span>
-      <div><div class="opt-label">Scan Receipt</div><div class="opt-sub">Take a photo — text is read on your phone</div></div>
+      <div><div class="opt-label">Take Photo</div><div class="opt-sub">Camera — text is read on your phone</div></div>
+    </button>
+    <button class="opt-btn" onclick="UI.startLibrary()">
+      <span class="opt-ico">🖼</span>
+      <div><div class="opt-label">Choose from Photos</div><div class="opt-sub">Pick an existing receipt photo</div></div>
     </button>
     <button class="opt-btn" onclick="UI.showForm()">
       <span class="opt-ico">💳</span>
@@ -896,11 +902,12 @@ const UI = (() => {
     $('camera-input').click();
   }
 
-  $('camera-input').addEventListener('change', async e => {
-    if (!e.target.files.length) return;
-    const file = e.target.files[0];
-    e.target.value = '';
+  function startLibrary() {
+    close();
+    $('library-input').click();
+  }
 
+  async function handleImageFile(file) {
     open('sh-ocr');
     $('ocr-title').textContent = 'Reading Receipt…';
     $('ocr-status').textContent = 'Starting…';
@@ -922,6 +929,20 @@ const UI = (() => {
       alert('Could not read receipt. Please enter manually.\n\n(' + err.message + ')');
       showForm({}, 'receipt');
     }
+  }
+
+  $('camera-input').addEventListener('change', e => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    e.target.value = '';
+    handleImageFile(file);
+  });
+
+  $('library-input').addEventListener('change', e => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    e.target.value = '';
+    handleImageFile(file);
   });
 
   // ----- Form -----
@@ -1147,7 +1168,7 @@ const UI = (() => {
 
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
-    showAdd, startScan, showForm, showCashForm, saveForm, doMerge, skipMerge,
+    showAdd, startScan, startLibrary, showForm, showCashForm, saveForm, doMerge, skipMerge,
     showDetail, showExport, showSettings, addCard, removeCard, showShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
