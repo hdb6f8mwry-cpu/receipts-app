@@ -216,17 +216,17 @@ select.fi{cursor:pointer}
   <div class="sheet">
     <div class="handle"></div>
     <div class="sheet-title">Add Entry</div>
+    <button class="opt-btn" onclick="UI.scanReceipt('camera')">
+      <span class="opt-ico">📷</span>
+      <div><div class="opt-label">Take Photo</div><div class="opt-sub">iPhone reads the receipt for you</div></div>
+    </button>
+    <button class="opt-btn" onclick="UI.scanReceipt('library')">
+      <span class="opt-ico">🖼</span>
+      <div><div class="opt-label">Choose from Photos</div><div class="opt-sub">Pick an existing receipt photo</div></div>
+    </button>
     <button class="opt-btn" onclick="UI.showPaste()">
       <span class="opt-ico">📋</span>
-      <div><div class="opt-label">Paste Receipt Text</div><div class="opt-sub">Most accurate — copy text with iPhone Live Text</div></div>
-    </button>
-    <button class="opt-btn" onclick="UI.startScan()">
-      <span class="opt-ico">📷</span>
-      <div><div class="opt-label">Take Photo</div><div class="opt-sub">Basic in-app reading — check every field</div></div>
-    </button>
-    <button class="opt-btn" onclick="UI.startLibrary()">
-      <span class="opt-ico">🖼</span>
-      <div><div class="opt-label">Choose from Photos</div><div class="opt-sub">Basic in-app reading — check every field</div></div>
+      <div><div class="opt-label">Paste Receipt Text</div><div class="opt-sub">Text you copied with Live Text</div></div>
     </button>
     <button class="opt-btn" onclick="UI.showForm()">
       <span class="opt-ico">💳</span>
@@ -236,6 +236,9 @@ select.fi{cursor:pointer}
       <span class="opt-ico">💵</span>
       <div><div class="opt-label">Cash Payment</div><div class="opt-sub">No card — just amount and what for</div></div>
     </button>
+    <div style="text-align:center;margin-top:10px">
+      <button onclick="UI.startLibrary()" style="background:none;border:none;color:var(--text3);font-size:13px;text-decoration:underline;cursor:pointer">Read a photo inside the app instead (less accurate)</button>
+    </div>
     <button class="btn-cancel" onclick="UI.close()">Cancel</button>
   </div>
 </div>
@@ -1071,6 +1074,27 @@ const UI = (() => {
     $('library-input').click();
   }
 
+  const SCAN_SHORTCUT = 'Scan Receipt';
+  let _scanMode = 'camera';
+
+  function launchShortcut(mode) {
+    location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SCAN_SHORTCUT)
+      + '&input=text&text=' + mode;
+  }
+
+  async function scanReceipt(mode) {
+    _scanMode = mode;
+    close();
+    if (await DB.getSetting('scan_shortcut_ready', false)) launchShortcut(mode);
+    else showReceiptShortcut(true);
+  }
+
+  async function confirmShortcutReady() {
+    await DB.setSetting('scan_shortcut_ready', true);
+    close();
+    launchShortcut(_scanMode);
+  }
+
   function showPaste() {
     close();
     $('paste-text').value = '';
@@ -1357,36 +1381,40 @@ const UI = (() => {
   }
 
   // ----- Shortcut guide -----
-  function showReceiptShortcut() {
-    const url = location.origin + location.pathname;
+  function showReceiptShortcut(fromScan = false) {
+    const link = location.origin + location.pathname + '#ocr=';
     $('shortcut-title').textContent = 'Scan Receipt Shortcut';
     $('shortcut-body').innerHTML = `
       <div style="font-size:14px;line-height:1.6;color:var(--text2);padding-top:4px">
-        <p style="margin-bottom:12px">Uses iPhone's own text recognition (same as Live Text) — much more accurate. Run it from the Share button on any receipt photo, or tap it to take a new photo. The text never leaves your phone.</p>
+        <p style="margin-bottom:12px">${fromScan ? '<strong>One-time setup.</strong> ' : ''}Take Photo and Choose from Photos hand the picture to a Shortcut, which reads it with iPhone's own text recognition and brings the details back here. The text never leaves your phone.</p>
         <div class="guide-step">
           <strong>Step 1 — New shortcut</strong><br>
-          Open <strong>Shortcuts</strong> → <em>Shortcuts</em> tab → <strong>+</strong>. Name it <strong>Scan Receipt</strong>.
+          Open <strong>Shortcuts</strong> → <strong>+</strong>. Tap the name at the top and call it exactly <strong>${SCAN_SHORTCUT}</strong>.
         </div>
         <div class="guide-step">
-          <strong>Step 2 — Allow sharing photos to it</strong><br>
-          Tap the <strong>ⓘ</strong> (details) → turn on <strong>Show in Share Sheet</strong>. Back in the editor, tap <em>Images</em> at the top so it only receives images. Set <em>If there's no input</em> → <strong>Ask For Photos</strong> (or <em>Take Photo</em>).
+          <strong>Step 2 — Camera or photo library</strong><br>
+          Add an <strong>If</strong> action. Set it to: If <em>Shortcut Input</em> <strong>is</strong> <code>library</code>.<br>
+          • Under <em>If</em>: add <strong>Select Photos</strong>.<br>
+          • Under <em>Otherwise</em>: add <strong>Take Photo</strong>.
         </div>
         <div class="guide-step">
-          <strong>Step 3 — Add these 3 actions, in order</strong><br>
-          1. <strong>Extract Text from Image</strong> (input: Shortcut Input)<br>
-          2. <strong>URL Encode</strong> (input: Text from step 1, mode: Encode)<br>
-          3. <strong>Open URLs</strong> with this URL, then replace <em>Encoded Text</em> with the variable from step 2:
-          <code class="guide-url">${url}#ocr=<strong>Encoded Text</strong></code>
+          <strong>Step 3 — Read and send back</strong> (below <em>End If</em>)<br>
+          1. <strong>Extract Text from Image</strong> — input: <em>If Result</em><br>
+          2. <strong>URL Encode</strong> — input: <em>Text</em><br>
+          3. <strong>Open URLs</strong> — paste this link, then add the <em>URL Encoded Text</em> variable right after it:
+          <code class="guide-url">${link}</code>
+          <button class="btn-cancel" style="margin:8px 0 0;width:100%" onclick="navigator.clipboard.writeText('${link}').then(()=>UI.toast('Link copied'))">Copy link</button>
         </div>
         <div class="guide-step">
-          <strong>Step 4 — Use it</strong><br>
-          In Photos, open a receipt → <strong>Share</strong> → <strong>Scan Receipt</strong>. The app opens with the details filled in for you to check and save.
+          <strong>Step 4 — First run</strong><br>
+          iPhone will ask to allow camera/photos access and to open this site. Choose <strong>Always Allow</strong> so it's one tap next time.
         </div>
         <div class="guide-warn">
           <strong>Tip</strong><br>
-          The Shortcut opens the app in Safari. Keep using the app from Safari so all entries stay in one place.
+          The Shortcut opens the app in a new Safari tab. Keep using the app from Safari (not a Home Screen icon) so entries stay in one place.
         </div>
-      </div>`;
+      </div>
+      <button class="btn-primary" style="margin:12px 0 0;width:100%" onclick="UI.confirmShortcutReady()">I've set it up — ${_scanMode === 'library' ? 'choose a photo' : 'take a photo'}</button>`;
     open('sh-shortcut');
   }
 
@@ -1434,7 +1462,7 @@ const UI = (() => {
 
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
-    showAdd, startScan, startLibrary, showPaste, readPasted, readText, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
+    showAdd, startScan, startLibrary, scanReceipt, confirmShortcutReady, showPaste, readPasted, readText, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
     showDetail, showExport, showSettings, addCard, editDevices, removeCard, showShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
