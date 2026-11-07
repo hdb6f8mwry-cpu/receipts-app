@@ -310,6 +310,7 @@ select.fi{cursor:pointer}
             <option value="manual">Manual</option>
             <option value="receipt">Receipt photo</option>
             <option value="apple-pay">Apple Pay</option>
+            <option value="grab-email">Grab email</option>
             <option value="cash">Cash</option>
           </select>
         </div>
@@ -383,6 +384,9 @@ select.fi{cursor:pointer}
       </div>
       <div class="set-row" onclick="UI.showShortcut()" style="cursor:pointer">
         <span>📱 Set up Apple Pay Shortcut</span><span style="color:var(--text3)">›</span>
+      </div>
+      <div class="set-row" onclick="UI.showGrabShortcut()" style="cursor:pointer">
+        <span>🚗 Set up Grab email automation</span><span style="color:var(--text3)">›</span>
       </div>
     </div>
     <button class="btn-cancel" onclick="UI.close()">Close</button>
@@ -655,6 +659,94 @@ const OCR = (() => {
     return { amount, date, merchant, card_last4, card_network };
   }
 
+  // ----- Grab e-receipt email (plain-text body from the Mail automation). Separate from parse(). -----
+  // Returns the fields it found plus `complete` (safe to save without the form) and `problems`.
+  function parseGrab(input) {
+    const MON = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    const num = s => parseFloat(s.replace(/,/g, ''));
+    const mkDate = (d, mon, y) => {
+      const yy = y.length === 2 ? 2000 + +y : +y, mm = MON[mon.slice(0,3).toLowerCase()];
+      const dt = new Date(yy, mm, +d);
+      return (mm === undefined || isNaN(dt) || dt.getDate() !== +d) ? null : localISO(dt);
+    };
+    let text = String(input || '').replace(/\r\n?|[\u2028\u2029]/g, '\n').replace(/\u00a0/g, ' ');
+
+    // Skip anything before Grab's own text (signature, "Begin forwarded message" header)
+    const startRe = /hope you enjoyed your|your tip goes a long way|thanks!\s*your tip/i;
+    const s = text.search(startRe);
+    if (s >= 0) text = text.slice(s);
+    else { const h = text.search(/^reply-to:.*grab.*$/im); if (h >= 0) text = text.slice(h).replace(/^.*\n/, ''); }
+    const lines = text.split('\n').map(l => l.trim());
+    const problems = [];
+
+    // Type
+    let kind = 'other';
+    if (/hope you enjoyed your ride/i.test(text)) kind = 'ride';
+    else if (/hope you enjoyed your food/i.test(text)) kind = 'food';
+    else if (/your tip goes a long way|total\s+paid\s*rm\s*[\d,]+\.\d{2}\s*tip\b/i.test(text)) kind = 'tip';
+    const merchant = kind === 'food' ? 'Grab Food' : (kind === 'ride' || kind === 'tip') ? 'Grab Ride' : 'Grab';
+    if (kind === 'other') problems.push('Not a ride, food or tip receipt');
+
+    // Amount — every total found must agree
+    const totals = [];
+    if (kind === 'food') {
+      for (const m of text.matchAll(/total\s*\(incl\.?\s*tax\)\s*rm\s*([\d,]+\.\d{2})/gi)) totals.push(num(m[1]));
+      // Top "TOTAL" with "RM 89.60" on the next line
+      for (const m of text.matchAll(/^\s*total\s*\n\s*rm\s*([\d,]+\.\d{2})/gim)) totals.push(num(m[1]));
+    } else {
+      // "Total Paid RM15.30", "Total Paid\t15.30", "Total Paid\n15.30"
+      for (const m of text.matchAll(/total\s+paid\s*(?:rm\s*)?([\d,]+\.\d{2})/gi)) totals.push(num(m[1]));
+    }
+    let amount = totals.length ? totals[0] : null;
+    if (!totals.length) problems.push('No total found');
+    else if (totals.some(t => Math.abs(t - totals[0]) > 0.001)) { problems.push('Totals disagree: ' + totals.join(' / ')); }
+    if (amount !== null && !(amount > 0)) { amount = null; problems.push('Total is zero'); }
+
+    // Date — the receipt's own date, never today's
+    let date = null, m;
+    if ((m = text.match(/picked\s+up\s+on\s+(\d{1,2})\s+([a-z]+)\s+(\d{4})/i))) date = mkDate(m[1], m[2], m[3]);
+    if (!date && (m = text.match(/pick-?up\s+time:\s*(\d{1,2})\s+([a-z]+)\s+(\d{2,4})\b/i))) date = mkDate(m[1], m[2], m[3]);
+    if (!date && (m = text.match(/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{2}|\d{4})\s+\d{1,2}:\d{2}/i))) date = mkDate(m[1], m[2], m[3]);
+    if (!date) problems.push('No receipt date found');
+
+    // Card last 4
+    let card_last4 = null;
+    if (kind === 'food') {
+      const i = lines.findIndex(l => /^payment\s+method:?/i.test(l));
+      if (i >= 0) {
+        const same = lines[i].match(/(\d{4})\s*$/);
+        const next = lines.slice(i + 1).find(l => l);
+        card_last4 = same ? same[1] : ((next || '').match(/(?:^|\D)(\d{4})\s*$/) || [])[1] || null;
+      }
+    } else if (amount !== null) {
+      // Ride: a line "6698<tab>15.30" — four digits followed by the total
+      for (const l of lines) {
+        const c = l.match(/^(\d{4})\s+(?:rm\s*)?([\d,]+\.\d{2})$/i);
+        if (c && Math.abs(num(c[2]) - amount) < 0.001) { card_last4 = c[1]; break; }
+      }
+    }
+    if (!card_last4) problems.push('No card number found');
+
+    // Booking ID → ref
+    const ref = (text.match(/booking\s+(?:id|code)\s*:?\s*(A-[A-Z0-9]+)/i) || [])[1] || '';
+
+    // Place
+    let place = '';
+    if (kind === 'food') {
+      const i = lines.findIndex(l => /^order\s+location:?/i.test(l));
+      if (i >= 0) place = lines[i].replace(/^order\s+location:?\s*/i, '') || lines.slice(i + 1).find(l => l) || '';
+    } else if (kind === 'ride') {
+      // Trip timeline: "⋮ <pickup>" / "1:50PM" / "<drop-off>" / "1:57PM"
+      const stops = [];
+      lines.forEach((l, i) => { if (/^\d{1,2}:\d{2}\s*[ap]m$/i.test(l) && i > 0) stops.push(lines[i - 1].replace(/^[⋮\s]+/, '')); });
+      const st = stops.filter(Boolean).slice(-2);
+      if (st.length === 2) place = st[0] + ' → ' + st[1];
+    }
+
+    const complete = kind !== 'other' && amount !== null && !!date && !!card_last4 && !problems.length;
+    return { kind, merchant, amount, date, card_last4, ref, place, complete, problems };
+  }
+
   // Crop to the white paper and binarize with a local threshold, so table texture and shadows aren't read as text
   async function preprocess(file) {
     const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
@@ -735,7 +827,7 @@ const OCR = (() => {
     return { text, parsed: parse(text) };
   }
 
-  return { run, parse };
+  return { run, parse, parseGrab };
 })();
 
 
@@ -744,7 +836,7 @@ const OCR = (() => {
 // ============================================================
 const Exp = (() => {
   function toCSV(entries) {
-    const hdr = ['Date','Merchant','Amount (MYR)','Card','Category','Source'];
+    const hdr = ['Date','Merchant','Amount (MYR)','Card','Category','Source','Ref'];
     const rows = entries.map(e => {
       const d = new Date(e.date + 'T00:00:00');
       const ds = d.toLocaleDateString('en-MY',{day:'2-digit',month:'2-digit',year:'numeric'});
@@ -755,7 +847,8 @@ const Exp = (() => {
         (+e.amount||0).toFixed(2),
         '"' + cardStr + '"',
         '"' + (e.category||'').replace(/"/g,'""') + '"',
-        e.source||'manual',
+        e.source === 'grab-email' ? 'Grab email' : (e.source||'manual'),
+        '"' + (e.ref||'').replace(/"/g,'""') + '"',
       ];
     });
     return [hdr.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -845,6 +938,7 @@ const UI = (() => {
   let _month = new Date();
   let _view  = 'cards';   // 'cards' | 'merchant' | 'categories'
   let _editId = null;
+  let _extra = {};
   let _pendingDup = null;
   let _printedLast4 = null;
 
@@ -856,10 +950,12 @@ const UI = (() => {
   function srcIcon(s) {
     if (s === 'receipt')   return { icon:'📷', cls:'' };
     if (s === 'apple-pay') return { icon:'💳', cls:'' };
+    if (s === 'grab-email') return { icon:'🚗', cls:'' };
     if (s === 'cash')      return { icon:'💵', cls:'cash' };
     return { icon:'✏️', cls:'' };
   }
 
+  const SRC_LABEL = { 'grab-email':'Grab email' };
   const isCashEntry = e => e.source === 'cash' || (!e.card_last4 && e.card_name === 'Cash');
 
   // ----- Shared: single entry row HTML -----
@@ -1174,6 +1270,7 @@ const UI = (() => {
   // ----- Form -----
   async function showForm(prefill={}, srcDefault='manual', editId=null) {
     _editId = editId;
+    _extra = editId ? {} : Object.fromEntries(['ref','place','raw_text'].filter(k => prefill[k]).map(k => [k, prefill[k]]));
     _pendingDup = null;
     $('merge-slot').innerHTML = '';
     $('form-card-row').classList.remove('need');
@@ -1194,7 +1291,7 @@ const UI = (() => {
 
     $('f-merchant').value = prefill.merchant || '';
     $('f-amount').value   = prefill.amount   ? (+prefill.amount).toFixed(2) : '';
-    $('f-date').value     = prefill.date     || localISO();
+    $('f-date').value     = prefill.date     || (srcDefault === 'grab-email' ? '' : localISO());
     $('f-cat').value      = prefill.category || '';
     $('f-src').value      = prefill.source   || srcDefault;
 
@@ -1208,7 +1305,7 @@ const UI = (() => {
     } else if (prefill.card_name) {
       const matched = cards.find(c => prefill.card_name.includes(c.last4) || prefill.card_name.toLowerCase().includes(c.name.toLowerCase()));
       if (matched) sel.value = matched.last4;
-    } else if (srcDefault === 'receipt') {
+    } else if (srcDefault === 'receipt' || srcDefault === 'grab-email') {
       // Unknown number: a card picked for it before, else the only saved card on that network,
       // else leave it for the user to choose (never silently Cash)
       const aliases = (await DB.getSetting('card_aliases')) || {};
@@ -1228,7 +1325,7 @@ const UI = (() => {
     $('raw-text').style.display = 'none';
     $('raw-toggle').textContent = 'Show scanned text';
 
-    $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : 'New Entry');
+    $('form-title').textContent = editId ? 'Edit Entry' : (srcDefault==='receipt' ? 'Review Receipt' : srcDefault==='grab-email' ? 'Review Grab Receipt' : 'New Entry');
     $('form-save').textContent  = editId ? 'Save Changes' : 'Save Entry';
     open('sh-form');
   }
@@ -1266,6 +1363,7 @@ const UI = (() => {
       category,
       source: isCash ? 'cash' : source,
     };
+    if (!_editId) Object.assign(entry, _extra);
 
     if (_editId) {
       await DB.updateEntry(_editId, entry);
@@ -1330,7 +1428,9 @@ const UI = (() => {
       ['Date',     fmtDate(entry.date)],
       ['Paid with', cash ? '💵 Cash' : esc(card ? card.name + ' \xb7' + entry.card_last4 : entry.card_last4 || '—')],
       ['Category', esc(entry.category || '—')],
-      ['Source',   srcIcon(entry.source).icon + ' ' + (entry.source || 'manual')],
+      ['Source',   srcIcon(entry.source).icon + ' ' + (SRC_LABEL[entry.source] || entry.source || 'manual')],
+      ...(entry.ref   ? [['Booking', esc(entry.ref)]]   : []),
+      ...(entry.place ? [['Place',   esc(entry.place)]] : []),
     ].map(([k,v]) => `<div class="df"><span class="dk">${k}</span><span class="dv">${v}</span></div>`).join('');
 
     $('detail-edit').onclick = () => { close(); showForm(entry, entry.source, entry.id); };
@@ -1481,6 +1581,42 @@ const UI = (() => {
     open('sh-shortcut');
   }
 
+  function showGrabShortcut() {
+    const url = location.origin + location.pathname + '?grabmail=';
+    $('shortcut-title').textContent = 'Grab Email Automation';
+    $('shortcut-body').innerHTML = `
+      <div style="font-size:14px;line-height:1.6;color:var(--text2);padding-top:4px">
+        <p style="margin-bottom:12px">When a Grab e-receipt reaches the Mail app, an automation opens this app with the email and the ride or food order is saved by itself.</p>
+        <div class="guide-step">
+          <strong>Step 1 — New automation</strong><br>
+          Shortcuts → <em>Automation</em> → <strong>+</strong> → <strong>Email</strong>.
+        </div>
+        <div class="guide-step">
+          <strong>Step 2 — Trigger</strong><br>
+          Sender: <strong>no-reply@grab.com</strong><br>
+          Subject contains: <strong>E-Receipt</strong><br>
+          Choose <strong>Run Immediately</strong>.
+        </div>
+        <div class="guide-step">
+          <strong>Step 3 — Actions</strong><br>
+          1. <strong>Text</strong> — tap the field, choose <em>Shortcut Input</em>, then tap it again and choose <strong>Content</strong>.<br>
+          2. <strong>URL Encode</strong> — Encode the <em>Text</em>.<br>
+          3. <strong>Open URLs</strong> — paste this link, then add the <em>URL Encoded Text</em> variable right after it:
+          <code class="guide-url">${url}</code>
+          <button class="btn-cancel" style="margin:8px 0 0;width:100%" onclick="navigator.clipboard.writeText('${url}').then(()=>UI.toast('Link copied'))">Copy link</button>
+        </div>
+        <div class="guide-step">
+          <strong>Step 4 — Mail account</strong><br>
+          Gmail must be in the Mail app (Settings → Apps → Mail → Mail Accounts). Entries appear when Mail fetches new mail.
+        </div>
+        <div class="guide-warn">
+          <strong>What gets saved</strong><br>
+          Rides and tips are saved as <strong>Grab Ride</strong>, food orders as <strong>Grab Food</strong>, with the receipt's date, card and booking ID. If anything is missing, the card isn't saved here, or the totals don't agree, the form opens for you to check. A receipt already recorded is skipped.
+        </div>
+      </div>`;
+    open('sh-shortcut');
+  }
+
   // ----- Toast -----
   let _tt;
   function toast(msg) {
@@ -1494,7 +1630,7 @@ const UI = (() => {
   return {
     prevMonth, nextMonth, renderDashboard, renderBanner,
     showAdd, startScan, startLibrary, scanReceipt, confirmShortcutReady, showPaste, readPasted, readText, toggleRaw, showReceiptShortcut, showForm, showCashForm, saveForm, doMerge, skipMerge,
-    showDetail, showExport, showSettings, addCard, editDevices, removeCard, showShortcut,
+    showDetail, showExport, showSettings, addCard, editDevices, removeCard, showShortcut, showGrabShortcut,
     setView, close, toast,
     get fmtMoney() { return n => 'RM\u00a0' + (+n||0).toFixed(2); },
   };
@@ -1534,6 +1670,42 @@ async function handleApplePay() {
 }
 
 
+// ============================================================
+// GRAB E-RECEIPT EMAIL (?grabmail=<plain-text body>, from the Mail automation)
+// ============================================================
+async function handleGrabMail() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('grabmail')) return;
+  const text = p.get('grabmail') || '';
+  p.delete('grabmail');
+  // Remove it so a reload can't add the entry again
+  history.replaceState({}, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash);
+  if (!text.trim()) return;
+
+  const g = OCR.parseGrab(text);
+  const cards = await DB.getCards();
+  const card = DB.cardByNumber(cards, g.card_last4);
+  const label = `${g.merchant} RM${g.amount != null ? g.amount.toFixed(2) : '?'}`;
+
+  if (g.ref && (await DB.allEntries()).some(e => e.ref === g.ref)) { UI.toast('Already recorded: ' + label); return; }
+  const entry = {
+    merchant: g.merchant, amount: g.amount, date: g.date,
+    card_last4: card?.last4 || '', card_name: card?.name || '',
+    category: '', source: 'grab-email', ref: g.ref, place: g.place, raw_text: text,
+  };
+  if (card && g.amount && g.date && (await DB.findDup(entry))) { UI.toast('Already recorded: ' + label); return; }
+
+  if (!g.complete || !card) {
+    UI.showForm({ merchant: g.merchant, amount: g.amount, date: g.date, card_last4: g.card_last4,
+                  ref: g.ref, place: g.place, raw_text: text, source: 'grab-email' }, 'grab-email');
+    return;
+  }
+  await DB.addEntry(entry);
+  const d = new Date(g.date + 'T00:00:00').toLocaleDateString('en-MY', { day:'numeric', month:'short' });
+  UI.toast(`Saved: ${label} · ${d}`);
+}
+
+
 // Receipt text from the Scan Receipt shortcut arrives in the #fragment, which browsers never send to the server
 function handleOcrHash() {
   const m = location.hash.match(/^#ocr=([\s\S]*)/);
@@ -1550,6 +1722,7 @@ window.addEventListener('hashchange', handleOcrHash);
 // ============================================================
 (async () => {
   await DB.open();
+  await handleGrabMail();
   await handleApplePay();
   UI.renderDashboard();
   handleOcrHash();
